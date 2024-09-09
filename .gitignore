@@ -1,0 +1,5 @@
+/venv-filtering/
+untitled.blend
+/py_test/*.exr
+/py_test/exr_files/*
+/py_test/*.jpg

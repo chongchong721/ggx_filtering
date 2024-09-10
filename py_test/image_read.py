@@ -154,7 +154,7 @@ def loop_through_certrain_face(img,cubemap_res, interpolators,face_idx):
     uvs[:,1] = np.tile(cubemap_uv,cubemap_res)
 
 
-    xyz = map_util.uv_to_xyz_vectorized(uvs,face_idx)
+    xyz = map_util.uv_to_xyz_vectorized(uvs,face_idx,True)
     lat,lon = map_util.xyz_to_latlon_vectorized(xyz)
     lon += np.pi
 

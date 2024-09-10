@@ -1,9 +1,7 @@
-from operator import index
-
 import numpy as np
 import scipy
 import map_util
-
+import skimage
 
 
 """
@@ -387,7 +385,7 @@ def downsample(faces_extended,face_idx):
     
     """
 
-    uv_table = np.zeros((face_extended_res,face_extended_res,2))
+
     """
     For out of bound points(the boundary), we probably need to interpolate xyz, but how?
     
@@ -396,7 +394,8 @@ def downsample(faces_extended,face_idx):
     
     In the current implementation, the direction of the boundary is almost the same as the second row/col
     since the boundary uses u/v of Epsilon and the original face boundary uses u/v of OneMinusEpsilon. They
-    have little difference, so now just set those place's u=0 or v=0 or u=1 or v=1
+    have little difference, so now just set those place's u=0 or v=0 or u=1 or v=1(we think of this as the true
+    boundary of this face?)
     
     """
     idx_info, edge_side_info, reverse_info = get_edge_information(face_idx)
@@ -404,31 +403,80 @@ def downsample(faces_extended,face_idx):
     left_reverse_flag, right_reverse_flag, up_reverse_flag, down_reverse_flag = reverse_info
     left_idx,right_idx,up_idx,down_idx = idx_info
 
-    left_uv = gen_boundary_uv(left_edge_side,left_reverse_flag,face_res,False)
-    right_uv = gen_boundary_uv(right_edge_side,right_reverse_flag,face_res,False)
-    up_uv = gen_boundary_uv(up_edge_side,up_reverse_flag,face_res,False)
-    down_uv = gen_boundary_uv(down_edge_side,down_reverse_flag,face_res,False)
+    #uv originate from bottom-left
+
+    left_uv = gen_boundary_uv('L',False,face_res,False)
+    right_uv = gen_boundary_uv('R',False,face_res,False)
+    up_uv = gen_boundary_uv('U',False,face_res,False)
+    down_uv = gen_boundary_uv('D',False,face_res,False)
+
+
+
+    # generate face uv
+    uv_table = np.zeros((face_extended_res,face_extended_res,2))
+    OneMinusEpsilon = 0.999999940395355225
+    Epsilon = 1.0 - OneMinusEpsilon
+    uv_ascending_order = np.linspace(0, 1.0, face_res, endpoint=True)
+    uv_ascending_order[0] = Epsilon
+    uv_ascending_order[-1] = OneMinusEpsilon
+
+    # yv for u, xv for v
+    xv, yv = np.meshgrid(np.flip(uv_ascending_order),uv_ascending_order,indexing='ij')
+    uv_table[1:-1,1:-1,0] = yv
+    uv_table[1:-1,1:-1,1] = xv
+
+    uv_table[1:-1,0,:] = left_uv
+    uv_table[1:-1,-1,:] = right_uv
+    uv_table[0,1:-1,:] = up_uv
+    uv_table[-1,1:-1,:] = down_uv
+
+    #corner
+    uv_table[0,0,:] = (uv_table[0,1,:] + uv_table[1,0,:]) / 2
+    uv_table[0,-1,:] = (uv_table[0,-2,:] + uv_table[1,-1,:]) / 2
+    uv_table[-1,0,:] = (uv_table[-2,0,:] + uv_table[-1,1,:]) / 2
+    uv_table[-1,-1,:] = (uv_table[-2,-1,:] + uv_table[-1,-2,:]) / 2
+
+    # now interpolate uv
+    uv_interpolators = []
+    for idx in range(2):
+        interpolator = scipy.interpolate.RegularGridInterpolator((np.arange(0,face_extended_res),np.arange(0,face_extended_res)),uv_table[:,:,idx])
+        uv_interpolators.append(interpolator)
+
+    uv_interpolated = np.zeros((point_xs.shape[0],point_xs.shape[1],2))
+    for idx in range(2):
+        interpolator = uv_interpolators[idx]
+        uv_interpolated[:,:,idx] = interpolator((point_xs,point_ys))
+
+    xyz_interpolated = map_util.uv_to_xyz_vectorized(uv_interpolated, face_idx,normalize_flag=False)
+
+    jacobian = map_util.jacobian_vertorized(xyz_interpolated)
+    jacobian_tuned = 0.5 + 0.5 * jacobian
+
+    weighted_points = points * np.stack((jacobian_tuned,jacobian_tuned,jacobian_tuned),axis=2)
+
+
+    # Downsample the weighted points
+    # https://scikit-image.org/docs/stable/api/skimage.measure.html#skimage.measure.block_reduce
+    downsampled_image = skimage.measure.block_reduce(weighted_points,(2,2,1),np.mean)
+
+
+    print(np.mean(weighted_points[2:4,2:4,0]))
+    print(downsampled_image[1,1,0])
 
 
 
 
 
-    left_xyz = map_util.uv_to_xyz_vectorized(left_uv,left_idx)
-    right_xyz = map_util.uv_to_xyz_vectorized(right_uv,right_idx)
-    up_xyz = map_util.uv_to_xyz_vectorized(up_uv,up_idx)
-    down_xyz = map_util.uv_to_xyz_vectorized(down_uv,down_idx)
 
 
-
-
-    #test
-    this_face_left_uv = gen_boundary_uv('L',False,face_res)
-    this_face_left_xyz = map_util.uv_to_xyz_vectorized(this_face_left_uv,face_idx)
-
-    test_xyz = map_util.uv_to_xyz((-0.01,0.3),face_idx)
-    test_xyz2 = map_util.uv_to_xyz((0.99,0.3),left_idx)
-
-    print("test")
+    # #test
+    # this_face_left_uv = gen_boundary_uv('L',False,face_res)
+    # this_face_left_xyz = map_util.uv_to_xyz_vectorized(this_face_left_uv,face_idx)
+    #
+    # test_xyz = map_util.uv_to_xyz((-0.01,0.3),face_idx)
+    # test_xyz2 = map_util.uv_to_xyz((0.99,0.3),left_idx)
+    #
+    # print("test")
 
 
 if __name__ == '__main__':

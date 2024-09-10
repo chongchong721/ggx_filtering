@@ -114,15 +114,25 @@ def xyz_to_uv(xyz:np.ndarray):
     return (u,v),index
 
 
-def uv_to_xyz_vectorized(uv,idx):
+def uv_to_xyz_vectorized(uv:np.ndarray,idx, normalize_flag=False):
     """
 
-    :param uv: array in shape of (N,2)
+    :param uv: array in shape of (N,2) or (M,N,2)
     :param idx:
+    :param normalize_flag: whether we normalize the xyz vector or not
+    when computing the Jacobian, we should not normalize it
     :return: vectorized direction in shape of (N,3)
     """
-    u = uv[:,0]
-    v = uv[:,1]
+
+    if uv.ndim == 2:
+        u = uv[:,0]
+        v = uv[:,1]
+    elif uv.ndim == 3:
+        u = uv[:,:,0]
+        v = uv[:,:,1]
+    else:
+        raise NotImplementedError
+
     uc = 2.0 * u - 1.0
     vc = 2.0 * v - 1.0
 
@@ -153,17 +163,33 @@ def uv_to_xyz_vectorized(uv,idx):
     else:
         raise NotImplementedError
 
-    # normalize xyz
-    vec = np.zeros((uv.shape[0],3))
-    vec[:,0] = x
-    vec[:,1] = y
-    vec[:,2] = z
 
-    norm = np.linalg.norm(vec,axis=1)
-    norm = np.tile(norm, (3, 1)).T
-    vec = vec / norm
+
+    if uv.ndim == 2:
+        vec = np.zeros((uv.shape[0], 3))
+        vec[:, 0] = x
+        vec[:, 1] = y
+        vec[:, 2] = z
+        # normalize xyz
+        if normalize_flag:
+            norm = np.linalg.norm(vec,axis=1)
+            norm = np.tile(norm, (3, 1)).T
+            vec = vec / norm
+    elif uv.ndim==3:
+        vec = np.zeros((uv.shape[0], uv.shape[1],3))
+        vec[:,:,0] = x
+        vec[:,:,1] = y
+        vec[:,:,2] = z
+        if normalize_flag:
+            norm = np.linalg.norm(vec,axis=2)
+            norm = np.stack((norm,norm,norm),axis=2)
+            vec = vec / norm
+    else:
+        raise NotImplementedError
 
     return vec
+
+
 
 
 def uv_to_xyz(uv, idx):
@@ -209,3 +235,28 @@ def uv_to_xyz(uv, idx):
     vec = vec / np.linalg.norm(vec)
 
     return vec
+
+
+def jacobian_vertorized(xyz):
+    """
+
+    :param xyz: in shape (N,3) or (M,N,3)
+    :return:
+    """
+    if xyz.ndim == 2:
+        power_2 = xyz * xyz
+        sum_xyz = np.sum(power_2, axis=1)
+        j = 1 / np.pow(sum_xyz,3/2)
+    elif xyz.ndim == 3:
+        power_2 = xyz * xyz
+        sum_xyz = np.sum(power_2, axis=2)
+        j = 1 / np.pow(sum_xyz,3/2)
+    else:
+        raise NotImplementedError
+
+    return j
+
+
+def jacobian(xyz):
+    x,y,z = xyz[0],xyz[1],xyz[2]
+    return 1 / np.pow((x**2+y**2+z**2),3/2)

@@ -294,4 +294,12 @@ if __name__ == '__main__':
     interpolators_list = grid_interpolator(img)
     cubemap_img = loop_through_cube_face_vectorized(img, face_resolution, interpolators_list)
     #gen_cubemap_preview_image(cubemap_img,face_resolution)
-    interpolation.extend_face(cubemap_img,0)
+    faces_extended = np.zeros((6,face_resolution+2,face_resolution+2,3))
+
+    for face_idx in range(6):
+        face_extended = interpolation.extend_face(cubemap_img,face_idx)
+        faces_extended[face_idx] = face_extended
+
+
+    interpolation.downsample(faces_extended, 0)
+

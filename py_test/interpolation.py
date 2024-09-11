@@ -37,7 +37,7 @@ def bilerp(array,location):
     s2 = array[1,0] * (1-ti) + array[1,1] * ti
 
     # lerp s1,s2
-    tj = location[1]
+    tj = location[0]
     s = s1 * (1-tj) + s2 * tj
 
     return s

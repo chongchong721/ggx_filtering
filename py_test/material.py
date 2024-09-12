@@ -342,6 +342,21 @@ class GGX:
 
         return c * inverse_term * inverse_term
 
+    def ndf_isotropic(self, cos_theta):
+        """
+        Only cosine(theta) is needed in isotropic case
+        :param cosine theta: computed directly from vector dot product
+        :return:
+        """
+        assert self.ax == self.ay
+        a = self.ax
+        a_pow_of2 = a ** 2
+        ndf = a_pow_of2 / (np.pi * np.pow(cos_theta * cos_theta * (a_pow_of2-1) + 1,2))
+
+        ndf = np.where(cos_theta > 0.0, ndf, 0.0)
+
+        return ndf
+
     # pdf of vndf
     def vndf(self, wi, wm):
         if wm[2][0] <= 0.0:

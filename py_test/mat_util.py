@@ -12,6 +12,22 @@ import numpy as np
 from tqdm import tqdm
 
 OneMinusEpsilon = 0.999999940395355225
+
+def reshape_direction(dir:np.ndarray):
+    """
+    reshape direction to [3,N]
+    :param dir:
+    :return:
+    """
+    if dir.ndim == 1:
+        return dir.reshape((3,1))
+    elif dir.ndim == 2:
+        assert dir.shape[1] == 3
+        return dir.T
+
+
+
+
 def run_once(f):
     def wrapper(*args, **kwargs):
         if not wrapper.has_run:

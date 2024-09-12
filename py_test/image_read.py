@@ -82,14 +82,19 @@ def grid_interpolator(image):
     # Note, latitude is from [0,np.pi]
     # longitude is from [-np.pi, np.pi]. Need to move to positive
     lat_res,lon_res = get_img_size(image)
-    latitudes = np.arange(0, lat_res)
-    longitudes = np.arange(0, lon_res)
+    # latitudes = np.arange(0, lat_res)
+    # longitudes = np.arange(0, lon_res)
+
+
+    #test code generate lat-lon in the right way
+    latitudes_test = map_util.create_pixel_index(lat_res,1)
+    longitudes_test = map_util.create_pixel_index(lon_res,1)
 
     interpolators = []
 
     for channel in range(3):
         img_chan = image[:,:,channel]
-        interpolator = scipy.interpolate.RegularGridInterpolator((latitudes,longitudes),img_chan)
+        interpolator = scipy.interpolate.RegularGridInterpolator((latitudes_test,longitudes_test),img_chan,bounds_error=False,fill_value=None)
         interpolators.append(interpolator)
 
     return interpolators
@@ -140,6 +145,10 @@ def loop_through_certrain_face(img,cubemap_res, interpolators,face_idx):
     cubemap_uv[0] = Epsilon
     cubemap_uv[-1] = OneMinusEpsilon
 
+    #test code generate uv in the right way?
+    cubemap_uv_test = map_util.create_pixel_index(cubemap_res,1)
+    cubemap_uv_test /= cubemap_res
+
     print("Computing face ", face_idx)
 
 
@@ -150,16 +159,18 @@ def loop_through_certrain_face(img,cubemap_res, interpolators,face_idx):
 
     uvs = np.zeros((cubemap_res*cubemap_res,2))
 
-    uvs[:,0] = np.repeat(cubemap_uv,cubemap_res)
-    uvs[:,1] = np.tile(cubemap_uv,cubemap_res)
+    uvs[:,0] = np.repeat(cubemap_uv_test,cubemap_res)
+    uvs[:,1] = np.tile(cubemap_uv_test,cubemap_res)
 
 
     xyz = map_util.uv_to_xyz_vectorized(uvs,face_idx,True)
     lat,lon = map_util.xyz_to_latlon_vectorized(xyz)
     lon += np.pi
 
-    lat_idx = lat / (np.pi) * (lat_res - 1)
-    lon_idx = lon / (np.pi * 2) * (lon_res - 1)
+    # the lat_idx and lon_idx in interpolator always have coordiante of x.5, with the max idx of lat/lon_res - 0.5
+    # Thus the index here should be lat / np.pi * lat_res
+    lat_idx = lat / (np.pi) * lat_res
+    lon_idx = lon / (np.pi * 2) * lon_res
 
     for chan_idx in range(3):
         interpolator = interpolators[chan_idx]

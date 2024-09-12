@@ -23,6 +23,20 @@ samples in other faces need to be retrieved when computing the boundary samples
 """
 
 
+
+
+
+
+"""
+For a face. Assume the face resolution is N
+This means the face have a length of N and each sample is located in the center of the pixel
+
+So, the leftmost sample will have a coordinate of 0.5, and the 
+
+
+"""
+
+
 def bilerp(array,location):
     """
 
@@ -122,35 +136,77 @@ def get_edge_information(face_idx):
     return (left_idx,right_idx,up_idx,down_idx),(left_edge_side,right_edge_side,up_edge_side,down_edge_side),(left_reverse_flag,right_reverse_flag,up_reverse_flag,down_reverse_flag)
 
 
-def gen_boundary_uv(edge_side,reverse_flag,cubemap_res,non_zero=True):
 
-    if non_zero:
-        OneMinusEpsilon = 0.999999940395355225
-        Epsilon = 1.0 - OneMinusEpsilon
-    else:
-        OneMinusEpsilon = 1.0
-        Epsilon = 0.0
+def gen_boundary_uv_for_interp(edge_side,reverse_flag,cubemap_res):
+    """
+    How to generate this is documented in downsample
+    :param edge_side: L(eft) R(ight) U(p) D(own)
+    :param reverse_flag: True or False
+    :param cubemap_res:
+    :return:
+    """
     uv = np.zeros((cubemap_res,2))
-    uv_ascending_order = np.linspace(0, 1.0, cubemap_res, endpoint=True)
-    uv_ascending_order[0] = Epsilon
-    uv_ascending_order[-1] = OneMinusEpsilon
+    uv_ascending_order = map_util.create_pixel_index(cubemap_res,1)
+
+    uv_ascending_order = uv_ascending_order / cubemap_res
+
+    uv_min = uv_ascending_order.min()
+    uv_max = uv_ascending_order.max()
+
+    epsilon = 1.0 - uv_max
+    assert 1.0 - uv_max == uv_min
 
     if edge_side == "L":
         # u is 0 while v goes from 1 to 0
-        uv[:,0] = np.full(cubemap_res,Epsilon)
+        uv[:,0] = np.full(cubemap_res,uv_min - 2 * epsilon)
         uv[:,1] = np.flip(uv_ascending_order)
     elif edge_side == "R":
         # u is 1 while v gose from 1 to 0
-        uv[:,0] = np.full(cubemap_res,OneMinusEpsilon)
+        uv[:,0] = np.full(cubemap_res,uv_max + 2 * epsilon)
         uv[:,1] = np.flip(uv_ascending_order)
     elif edge_side == "U":
         # v is 1 while u goes from 0 to 1
         uv[:,0] = uv_ascending_order
-        uv[:,1] = np.full(cubemap_res,OneMinusEpsilon)
+        uv[:,1] = np.full(cubemap_res,uv_max + 2 * epsilon)
     elif edge_side == "D":
         # v is 0 while u goes from 0 to 1
         uv[:,0] = uv_ascending_order
-        uv[:,1] = np.full(cubemap_res,Epsilon)
+        uv[:,1] = np.full(cubemap_res,uv_min - 2 * epsilon)
+    else:
+        raise NotImplementedError
+
+    if reverse_flag:
+        uv = np.flip(uv,axis=0)
+
+    return uv
+
+
+
+
+def gen_boundary_uv(edge_side,reverse_flag,cubemap_res):
+
+    uv = np.zeros((cubemap_res,2))
+    uv_ascending_order = map_util.create_pixel_index(cubemap_res,1)
+    uv_ascending_order = uv_ascending_order / cubemap_res
+    uv_min = uv_ascending_order.min()
+    uv_max = uv_ascending_order.max()
+
+    if edge_side == "L":
+        # u is 0 while v goes from 1 to 0
+        uv[:,0] = np.full(cubemap_res,uv_min)
+        uv[:,1] = np.flip(uv_ascending_order)
+    elif edge_side == "R":
+        # u is 1 while v gose from 1 to 0
+        uv[:,0] = np.full(cubemap_res,uv_max)
+        uv[:,1] = np.flip(uv_ascending_order)
+    elif edge_side == "U":
+        # v is 1 while u goes from 0 to 1
+        uv[:,0] = uv_ascending_order
+        uv[:,1] = np.full(cubemap_res,uv_max)
+    elif edge_side == "D":
+        # v is 0 while u goes from 0 to 1
+        uv[:,0] = uv_ascending_order
+        uv[:,1] = np.full(cubemap_res,uv_min)
     else:
         raise NotImplementedError
 
@@ -239,6 +295,9 @@ def extend_face(faces,face_idx):
     :return:
     """
 
+    channel_count = faces.shape[3]
+
+
     idx_info,edge_side_info,reverse_info = get_edge_information(face_idx)
 
 
@@ -263,20 +322,20 @@ def extend_face(faces,face_idx):
     if down_reverse_flag:
         down_bound = np.flip(down_bound,axis=0)
 
-    # merge the 4 corners
-    #TODO: is this the right way?
+    # compute the 4 corners According to 8.13.1 of OpenGL specification
+    # https://registry.khronos.org/OpenGL/specs/gl/glspec46.core.pdf
 
     # corners in shape of (3,)
-    up_left_corner = (up_bound[0] + left_bound[0]) / 2
-    up_right_corner = (up_bound[-1] + right_bound[0]) / 2
-    down_left_corner = (down_bound[0] + left_bound[-1]) / 2
-    down_right_corner = (down_bound[-1] + right_bound[-1]) / 2
+    up_left_corner = (up_bound[0] + left_bound[0] + faces[face_idx][0,0]) / 3
+    up_right_corner = (up_bound[-1] + right_bound[0] + faces[face_idx][0,-1]) / 3
+    down_left_corner = (down_bound[0] + left_bound[-1] + faces[face_idx][-1,0]) / 3
+    down_right_corner = (down_bound[-1] + right_bound[-1] + faces[face_idx][-1,-1]) / 3
 
     #TODO: check the above works
 
     face_res = faces[face_idx].shape[0]
 
-    face_extended = np.zeros((face_res+2,face_res+2,3))
+    face_extended = np.zeros((face_res+2,face_res+2,channel_count))
 
     face_extended[1:-1,0,:] = left_bound
     face_extended[1:-1,-1,:] = right_bound
@@ -321,6 +380,9 @@ def downsample(faces_extended,face_idx):
     :return:
     """
     assert faces_extended.shape[1] == faces_extended.shape[2]
+
+    channel_count = faces_extended.shape[3]
+
     face_extended_res = faces_extended.shape[1]
     face_res = face_extended_res - 2
     face_extended = faces_extended[face_idx]
@@ -330,7 +392,7 @@ def downsample(faces_extended,face_idx):
     row_range = np.arange(0,face_extended_res)
     col_range = np.arange(0,face_extended_res)
 
-    for chan_idx in range(3):
+    for chan_idx in range(channel_count):
         interpolator = scipy.interpolate.RegularGridInterpolator((row_range,col_range),face_extended[:,:,chan_idx])
         interpolators.append(interpolator)
 
@@ -355,9 +417,9 @@ def downsample(faces_extended,face_idx):
 
     point_xs,point_ys = np.meshgrid(point_idx,point_idx,indexing='ij')
 
-    points = np.zeros((point_xs.shape[0],point_xs.shape[1],3))
+    points = np.zeros((point_xs.shape[0],point_xs.shape[1],channel_count))
 
-    for chan_idx in range(3):
+    for chan_idx in range(channel_count):
         interpolator = interpolators[chan_idx]
         points[:,:,chan_idx] = interpolator((point_xs,point_ys))
 
@@ -387,16 +449,31 @@ def downsample(faces_extended,face_idx):
 
 
     """
-    For out of bound points(the boundary), we probably need to interpolate xyz, but how?
     
-    spherical linear interpolation?
-    or interpolate uv? -> this seems more reasonable since we are applying Jacobian afterwards?
+    For the boundary interpolated sample:
+    e.g.  face 4(+z)   The upper-left sample, it has three samples that are not in the face, with u,v(other faces) 
+    (?,?)                 |               (ε,ε) (face 2)
+                          |
+                          |   
+    -------------------------------------------------
+                          |    p
+                          |
+    (1-ε,1-ε) (face 1)    |               (ε,1-ε)
     
-    In the current implementation, the direction of the boundary is almost the same as the second row/col
-    since the boundary uses u/v of Epsilon and the original face boundary uses u/v of OneMinusEpsilon. They
-    have little difference, so now just set those place's u=0 or v=0 or u=1 or v=1(we think of this as the true
-    boundary of this face?)
+    The interpolated sample lies at the p location,
+    the UV of this sample is guaranteed to be within the surface. It can be computed analytically?(accurately?).
+    It should be something like: ε - 2ε * 1/4 = ε/2(the distance between two samples are 2ε
     
+    Thus, we could set 
+    - left extended boundary:  u to be -ε, v as usual
+    - right extended boundary: u to be 1 + ε, v sa usual
+    - up extended boundary:    v to be 1 + ε, u as usual
+    - down extended boundary:  v to be -ε, u as usual
+    
+    up-left corner uv(-ε,1+ε)
+    up-right corner uv(1+ε,1+ε)
+    bottom-left corner uv(-ε,-ε)
+    bottom-right corner uv(1+ε,-ε)
     """
     idx_info, edge_side_info, reverse_info = get_edge_information(face_idx)
     left_edge_side, right_edge_side, up_edge_side, down_edge_side = edge_side_info
@@ -405,20 +482,20 @@ def downsample(faces_extended,face_idx):
 
     #uv originate from bottom-left
 
-    left_uv = gen_boundary_uv('L',False,face_res,False)
-    right_uv = gen_boundary_uv('R',False,face_res,False)
-    up_uv = gen_boundary_uv('U',False,face_res,False)
-    down_uv = gen_boundary_uv('D',False,face_res,False)
+    left_uv = gen_boundary_uv_for_interp('L',False,face_res)
+    right_uv = gen_boundary_uv_for_interp('R',False,face_res)
+    up_uv = gen_boundary_uv_for_interp('U',False,face_res)
+    down_uv = gen_boundary_uv_for_interp('D',False,face_res)
+
 
 
 
     # generate face uv
     uv_table = np.zeros((face_extended_res,face_extended_res,2))
-    OneMinusEpsilon = 0.999999940395355225
-    Epsilon = 1.0 - OneMinusEpsilon
-    uv_ascending_order = np.linspace(0, 1.0, face_res, endpoint=True)
-    uv_ascending_order[0] = Epsilon
-    uv_ascending_order[-1] = OneMinusEpsilon
+    uv_ascending_order = map_util.create_pixel_index(face_res,1)
+    uv_ascending_order /= face_res
+    epsilon = uv_ascending_order.min()
+
 
     # yv for u, xv for v
     xv, yv = np.meshgrid(np.flip(uv_ascending_order),uv_ascending_order,indexing='ij')
@@ -431,10 +508,10 @@ def downsample(faces_extended,face_idx):
     uv_table[-1,1:-1,:] = down_uv
 
     #corner
-    uv_table[0,0,:] = (uv_table[0,1,:] + uv_table[1,0,:]) / 2
-    uv_table[0,-1,:] = (uv_table[0,-2,:] + uv_table[1,-1,:]) / 2
-    uv_table[-1,0,:] = (uv_table[-2,0,:] + uv_table[-1,1,:]) / 2
-    uv_table[-1,-1,:] = (uv_table[-2,-1,:] + uv_table[-1,-2,:]) / 2
+    uv_table[0,0,:] = np.array([-epsilon,1+epsilon])
+    uv_table[0,-1,:] = np.array([1+epsilon,1+epsilon])
+    uv_table[-1,0,:] = np.array([-epsilon,-epsilon])
+    uv_table[-1,-1,:] = np.array([1+epsilon,-epsilon])
 
     # now interpolate uv
     uv_interpolators = []
@@ -449,10 +526,47 @@ def downsample(faces_extended,face_idx):
 
     xyz_interpolated = map_util.uv_to_xyz_vectorized(uv_interpolated, face_idx,normalize_flag=False)
 
-    jacobian = map_util.jacobian_vertorized(xyz_interpolated)
-    jacobian_tuned = 0.5 + 0.5 * jacobian
+    """
+    The Jacobian weight needs to be normalized to ensure the color is not scaled.
+    We need to do sth like
+    sample[0] * J[0]/(J[0]+J[1]+J[2]+J[3])
+    
+    So we need to compute a Jacobian sum of 2x2 block here
+    
+    The final weight for each pixel i would be:
+    2*w[i] / (w[0] + w[1] + w[2] + w[3]) + 1/2
+    
+    Thus when we take the average of four samples, the color would be
+    
+    1/4 *(
+        s[0] * ( 2 * w[0] / (w[0] + w[1] + w[2] + w[3]) + 1/2 ) + 
+        s[1] * ( 2 * w[1] / (w[0] + w[1] + w[2] + w[3]) + 1/2 ) + 
+        s[2] * ( 2 * w[2] / (w[0] + w[1] + w[2] + w[3]) + 1/2 ) +      
+        s[3] * ( 2 * w[3] / (w[0] + w[1] + w[2] + w[3]) + 1/2 ) + 
+    )
+    = 1/4 * (
+        2 * (s[0] * w[0] + s[1] * w[1] + s[2] * w[2] + s[3] * w[3]) / (w[0] + w[1] + w[2] + w[3]) +
+        1/2 * (s[0] + s[1] + s[2] + s[3])
+    ) 
+    = 1/2 * (s[0] * w[0] + s[1] * w[1] + s[2] * w[2] + s[3] * w[3]) / (w[0] + w[1] + w[2] + w[3])
+     +1/2 * (s[0] + s[1] + s[2] + s[3])
+     
+     This means half of the contribution comes from directly taking the average and half the contribution comes from
+     the Jacobian weighted average
+    """
 
-    weighted_points = points * np.stack((jacobian_tuned,jacobian_tuned,jacobian_tuned),axis=2)
+    jacobian = map_util.jacobian_vertorized(xyz_interpolated)
+
+    jacobian_sum = skimage.measure.block_reduce(jacobian,(2,2),np.sum)
+    #copy(up sample) jacobian
+    jacobian_sum = np.repeat(np.repeat(jacobian_sum,2,axis=0),2,axis=1)
+
+    weight_tuned = 2 * jacobian / jacobian_sum + 0.5
+
+    if channel_count == 3:
+        weighted_points = points * np.stack((weight_tuned,weight_tuned,weight_tuned),axis=2)
+    else:
+        weighted_points = points * weight_tuned.reshape((weight_tuned.shape[0],weight_tuned.shape[1],1))
 
 
     # Downsample the weighted points
@@ -465,7 +579,7 @@ def downsample(faces_extended,face_idx):
 
 
 
-
+    return downsampled_image
 
 
 

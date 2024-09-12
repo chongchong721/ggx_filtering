@@ -260,3 +260,31 @@ def jacobian_vertorized(xyz):
 def jacobian(xyz):
     x,y,z = xyz[0],xyz[1],xyz[2]
     return 1 / np.pow((x**2+y**2+z**2),3/2)
+
+
+
+def create_pixel_index(resolution,dimension):
+    """
+    Util function that create a pixel index from 0.5 to resolution - 0.5
+    The length of this array is resolution, it can not be used for array index
+    it should be used to create interpolator and compute actual position
+    Given that every pixel is in the middle
+
+    !Origin is at top-left!
+
+    :param resolution: int or (int,int)
+    :param dimension: the dimension of the resolution, must be 1 or 2
+    :return: an 1D array if dimension == 1. two arrays generated from meshgrid if dimension == 2
+    """
+    if dimension == 1:
+        #resolution + 0.5 is used because arange only generates [start,stop)
+        idx_array = np.arange(0.5, resolution+0.5,1.0)
+        return idx_array
+    elif dimension == 2:
+        row_res = resolution[0]
+        col_res = resolution[1]
+        row_array = np.arange(0.5, row_res+0.5,1.0)
+        col_array = np.arange(0.5, col_res+0.5,1.0)
+        # xv is row, yv is col
+        xv,yv = np.meshgrid((row_array,col_array),indexing='ij')
+        return xv,yv

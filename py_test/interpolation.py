@@ -1,5 +1,7 @@
 import numpy as np
 import scipy
+from scipy.interpolate import RegularGridInterpolator
+
 import map_util
 import skimage
 
@@ -591,6 +593,217 @@ def downsample(faces_extended,face_idx):
     # test_xyz2 = map_util.uv_to_xyz((0.99,0.3),left_idx)
     #
     # print("test")
+
+
+def downsample_all_faces(faces):
+    """
+
+    :param faces: original faces without extending
+    :return:
+    """
+
+    res = faces.shape[1]
+    chan_count = faces.shape[-1]
+
+    #extending face
+    faces_extended = np.zeros((6, res + 2, res + 2, chan_count))
+
+    new_faces = np.zeros((6,res>>1,res>>1,chan_count))
+
+    for face_idx in range(6):
+        face = extend_face(faces,face_idx)
+        faces_extended[face_idx] = face
+
+    for face_idx in range(6):
+        new_face = downsample(faces_extended,face_idx)
+        new_faces[face_idx] = new_face
+
+    return new_faces
+
+
+
+def downsample_full(original_map, n_mipmap_level):
+    """
+    Takes the original highres cubemap, make a level of downsampled cubemap
+    :param original_map:
+    :param n_mipmap_level:
+    :return:
+    """
+    mipmaps = []
+    high_res = original_map.shape[1]
+    assert high_res == 128
+    previous_level_map = original_map
+    for i in range(n_mipmap_level):
+        if i == 0:
+            mipmaps.append(original_map)
+        else:
+            new_level_map = downsample_all_faces(previous_level_map)
+            mipmaps.append(new_level_map)
+            previous_level_map = new_level_map
+
+    return mipmaps
+
+
+
+
+#TODO: implement trilinear interpolation for mipmap?
+class trilinear_mipmap_interpolator:
+    """
+    We store a list of length channel_count
+    list[0] is a list consist of n_level of bilinear interpolator
+
+    It seems like we need to make a per-face interpolator to account for out-of-bound situation
+
+    So we would have in total
+    3 channels
+    For each channel, we have 6 faces, n-levels. 6n faces each face with a interpolator
+    """
+    def __init__(self, mipmap_list:list):
+        self.n_level = len(mipmap_list)
+        self.channel_count = mipmap_list[0].shape[-1]
+        self.bilinear_interpolator_list = []
+        self.extended_mipmap_list = []
+
+        #create extended_face mipmap list
+
+        for level_idx in range(self.n_level):
+            level_res = mipmap_list[level_idx].shape[1]
+            current_extended_faces = np.zeros((6,level_res+2,level_res+2,self.channel_count))
+            # Now generate interpolator for this face
+            for face_idx in range(6):
+                current_extended_face = extend_face(mipmap_list[level_idx], face_idx)
+                current_extended_faces[face_idx] = current_extended_face
+            self.extended_mipmap_list.append(current_extended_faces)
+
+
+        self.per_channel_interpolator_list = [[] for _ in range(self.channel_count)]
+
+        # dimension for each interpolator (face_idx, n_res, n_res)
+        for level_idx in range(self.n_level):
+            level_res = mipmap_list[level_idx].shape[1]
+            left_uv = gen_boundary_uv_for_interp('L', False, level_res)
+            right_uv = gen_boundary_uv_for_interp('R', False, level_res)
+            up_uv = gen_boundary_uv_for_interp('U', False, level_res)
+            down_uv = gen_boundary_uv_for_interp('D', False, level_res)
+
+            # generate face uv
+            uv_table = np.zeros((level_res + 2, level_res + 2, 2))
+            uv_ascending_order = map_util.create_pixel_index(level_res, 1)
+            uv_ascending_order /= level_res
+            epsilon = uv_ascending_order.min()
+
+            # yv for u, xv for v
+            xv, yv = np.meshgrid(np.flip(uv_ascending_order), uv_ascending_order, indexing='ij')
+            uv_table[1:-1, 1:-1, 0] = yv
+            uv_table[1:-1, 1:-1, 1] = xv
+
+            uv_table[1:-1, 0, :] = left_uv
+            uv_table[1:-1, -1, :] = right_uv
+            uv_table[0, 1:-1, :] = up_uv
+            uv_table[-1, 1:-1, :] = down_uv
+
+            # corner
+            uv_table[0, 0, :] = np.array([-epsilon, 1 + epsilon])
+            uv_table[0, -1, :] = np.array([1 + epsilon, 1 + epsilon])
+            uv_table[-1, 0, :] = np.array([-epsilon, -epsilon])
+            uv_table[-1, -1, :] = np.array([1 + epsilon, -epsilon])
+
+            for chan_idx in range(self.channel_count):
+                # This interpolator initialization should be in numpy order, not uv order
+                #TODO: check this is correct
+                current_level_chan_interpolator = RegularGridInterpolator((np.arange(0,6),uv_table[:,0,1],uv_table[0,:,0]),self.extended_mipmap_list[level_idx][...,chan_idx])
+                self.per_channel_interpolator_list[chan_idx].append(current_level_chan_interpolator)
+
+
+
+    def interpolate_all(self,xyz,level):
+        """
+
+        :param xyz: in shape of [N,3]
+        :return:
+        """
+        original_shape = xyz.shape
+        xyz = xyz.reshape((-1,3))
+        level = level.flatten()
+
+
+        import map_util
+        u,v,face_idx = map_util.xyz_to_uv_vectorized(xyz)
+
+        per_channel_result = [[] for _ in range(self.channel_count)]
+
+
+        for chan_idx in range(self.channel_count):
+            for level_idx in range(self.n_level):
+                chan_lev_result = self.per_channel_interpolator_list[chan_idx][level_idx]((face_idx,v,u))
+                per_channel_result[chan_idx].append(chan_lev_result)
+
+        per_channel_array = []
+        # Now we have n_level of interpolation result
+        # Try to convert it to numpy array?
+        for chan_idx in range(self.channel_count):
+            tmp = per_channel_result[chan_idx]
+            tmp = np.array(tmp)
+            per_channel_array.append(tmp)
+
+        # Now per_channel_array[i] contains n-levels of interpolated result for all directions
+
+        high_res_level = np.floor(level).astype(int)
+        low_res_level = np.ceil(level).astype(int)
+
+
+        # Do trilinear interpolation
+
+        per_channel_high_res_result = []
+        per_channel_low_res_result = []
+
+
+        tmp = np.arange(0,xyz.shape[0])
+
+
+        for chan_idx in range(self.channel_count):
+            per_channel_high_res_result.append(per_channel_array[chan_idx][high_res_level,tmp])
+            per_channel_low_res_result.append(per_channel_array[chan_idx][low_res_level,tmp])
+
+
+        lerp_t = level - high_res_level
+
+        final_color = []
+
+        for chan_idx in range(self.channel_count):
+
+            col_this_channel = lerp(per_channel_high_res_result[chan_idx], per_channel_low_res_result[chan_idx], lerp_t)
+            final_color.append(col_this_channel)
+
+
+        #reshape
+
+        final_color = np.array(final_color).T
+
+        final_color = final_color.reshape((original_shape[:-1] + (3,)))
+
+        print("Done")
+
+        return final_color
+
+
+
+def lerp(array_1,array_2, t):
+    """
+    lerp used to compute the final trilinear step
+
+    compute array_1 * (1-t) + array_2 * t
+
+    :param array_1: [N]
+    :param array_2: [N]
+    :param t: [N]
+    :return:
+    """
+    tmp1 = array_1 * (1.0 - t)
+    tmp2 = array_2 * t
+
+    return tmp1 + tmp2
+
 
 
 if __name__ == '__main__':

@@ -53,6 +53,69 @@ def latlon_to_xyz(lat,lon):
     return np.array([x,y,z])
 
 
+def xyz_to_uv_vectorized(xyz:np.ndarray):
+    """
+
+    :param xyz: array of xyz. xyz.shape[-1] must be 3(indicating xyz)
+    :return:
+    """
+    x,y,z = xyz[...,0],xyz[...,1],xyz[...,2]
+    abs_x = np.abs(x)
+    abs_y = np.abs(y)
+    abs_z = np.abs(z)
+
+    is_x_positive = x > 0
+    is_y_positive = y > 0
+    is_z_positive = z > 0
+
+    face_idx = np.zeros(xyz.shape[:-1])
+    u_idx = np.zeros_like(face_idx)
+    v_idx = np.zeros_like(face_idx)
+    max_axis = np.zeros_like(face_idx)
+
+    face_0_condition = is_x_positive & (abs_x >= abs_y) & (abs_x >= abs_z)
+    face_1_condition = (~is_x_positive) & (abs_x >= abs_y) & (abs_x >= abs_z)
+    face_2_condition = is_y_positive & (abs_y >= abs_z) & (abs_y >= abs_x)
+    face_3_condition = (~is_y_positive) & (abs_y >= abs_z) & (abs_y >= abs_x)
+    face_4_condition = is_z_positive & (abs_z >= abs_y) & (abs_z >= abs_x)
+    face_5_condition = (~is_z_positive) & (abs_z >= abs_y) & (abs_z >= abs_x)
+
+
+
+    face_idx[face_0_condition] = 0
+    face_idx[face_1_condition] = 1
+    face_idx[face_2_condition] = 2
+    face_idx[face_3_condition] = 3
+    face_idx[face_4_condition] = 4
+    face_idx[face_5_condition] = 5
+
+    max_axis[face_0_condition | face_1_condition] = abs_x[face_0_condition | face_1_condition]
+    max_axis[face_2_condition | face_3_condition] = abs_y[face_2_condition | face_3_condition]
+    max_axis[face_4_condition | face_5_condition] = abs_z[face_4_condition | face_5_condition]
+
+    u_idx[face_0_condition] = -z[face_0_condition]
+    u_idx[face_1_condition] = z[face_1_condition]
+    u_idx[face_2_condition] = x[face_2_condition]
+    u_idx[face_3_condition] = x[face_3_condition]
+    u_idx[face_4_condition] = x[face_4_condition]
+    u_idx[face_5_condition] = -x[face_5_condition]
+
+    v_idx[face_0_condition] = y[face_0_condition]
+    v_idx[face_1_condition] = y[face_1_condition]
+    v_idx[face_2_condition] = -z[face_2_condition]
+    v_idx[face_3_condition] = z[face_3_condition]
+    v_idx[face_4_condition] = y[face_4_condition]
+    v_idx[face_5_condition] = y[face_5_condition]
+
+    #normalize
+    u_idx = 0.5 * (u_idx / max_axis + 1.0)
+    v_idx = 0.5 * (v_idx / max_axis + 1.0)
+
+    return u_idx, v_idx, face_idx
+
+
+
+
 def xyz_to_uv(xyz:np.ndarray):
     """
     :param xyz: normalized vector xyz
@@ -288,3 +351,24 @@ def create_pixel_index(resolution,dimension):
         # xv is row, yv is col
         xv,yv = np.meshgrid((row_array,col_array),indexing='ij')
         return xv,yv
+
+
+
+def dot_vectorized_3D(v1, v2):
+    """
+    :param v1: v1
+    :param v2: v2 both in shape of (M,N,3)
+    :return:
+    """
+    result = np.einsum('ijk,ijk->ij', v1, v2)
+    return result
+
+
+def dot_vectorized_4D(v1, v2):
+    """
+    :param v1: v1
+    :param v2: v2 both in shape of (6,M,M,3)
+    :return:
+    """
+    result = np.einsum('ijkl,ijkl->ijk', v1, v2)
+    return result

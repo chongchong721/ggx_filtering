@@ -295,6 +295,14 @@ def test_tonemap():
     write_exr(img)
 
 
+
+def envmap_to_cubemap(path, cubemap_res):
+    envmap_img = hdri_read(path)
+    interpolators = grid_interpolator(envmap_img)
+    cubemap = loop_through_cube_face_vectorized(envmap_img, cubemap_res, interpolators)
+    return cubemap
+
+
 if __name__ == '__main__':
     #read_exr_image('exr_files/rosendal_plains_2_1k.exr')
     #test_tonemap()

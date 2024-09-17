@@ -576,11 +576,6 @@ def downsample(faces_extended,face_idx):
     downsampled_image = skimage.measure.block_reduce(weighted_points,(2,2,1),np.mean)
 
 
-    print(np.mean(weighted_points[2:4,2:4,0]))
-    print(downsampled_image[1,1,0])
-
-
-
     return downsampled_image
 
 
@@ -631,7 +626,7 @@ def downsample_full(original_map, n_mipmap_level):
     """
     mipmaps = []
     high_res = original_map.shape[1]
-    assert high_res == 128
+    #assert high_res == 128
     previous_level_map = original_map
     for i in range(n_mipmap_level):
         if i == 0:
@@ -715,16 +710,32 @@ class trilinear_mipmap_interpolator:
                 self.per_channel_interpolator_list[chan_idx].append(current_level_chan_interpolator)
 
 
+    def clamp_level(self,level):
+        """
+
+        :param level:[N,]
+        :return:
+        """
+        max_level = self.n_level - 1.0
+        min_level = 0.0
+
+        return np.clip(level,min_level,max_level)
+
+
+
 
     def interpolate_all(self,xyz,level):
         """
 
         :param xyz: in shape of [N,3]
+        :param level: in the shape of (xyz.shape[:-1]), incicating the mipmap level
         :return:
         """
         original_shape = xyz.shape
         xyz = xyz.reshape((-1,3))
         level = level.flatten()
+
+        level = self.clamp_level(level)
 
 
         import map_util

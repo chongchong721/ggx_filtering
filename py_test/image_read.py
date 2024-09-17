@@ -242,7 +242,7 @@ def loop_through_cube_face(img, cubemap_res, interpolators):
     return cubemap
 
 
-def gen_cubemap_preview_image(cubemap,cubemap_res, preview_path = None):
+def gen_cubemap_preview_image(cubemap,cubemap_res, preview_path = None,filename = None):
 
     #https://en.wikipedia.org/wiki/Cube_mapping#Memory_addressing
     if preview_path is None:
@@ -271,7 +271,7 @@ def gen_cubemap_preview_image(cubemap,cubemap_res, preview_path = None):
         cubemap_preview = np.load(preview_path).astype(np.float32)
 
 
-    write_exr(cubemap_preview)
+    write_exr(cubemap_preview,filename)
 
     # tonemap1 = cv2.createTonemap(gamma = 2.2)
     #
@@ -309,7 +309,7 @@ if __name__ == '__main__':
     #gen_cubemap_preview_image(None,512,"tmp.npy")
 
     face_resolution = 512
-    img = hdri_read('exr_files/rosendal_plains_2_1k.exr')
+    img = hdri_read('exr_files/08-21_Swiss_A.hdr')
     interpolators_list = grid_interpolator(img)
     cubemap_img = loop_through_cube_face_vectorized(img, face_resolution, interpolators_list)
     #gen_cubemap_preview_image(cubemap_img,face_resolution)

@@ -3,6 +3,7 @@ The second pass filtering
 There are in total 7 levels of mipmap: 2^7 -> 2^1
 """
 from cmath import polar
+from random import sample
 
 import numpy as np
 import map_util
@@ -73,21 +74,25 @@ def normalized(a, axis=-1, order=2):
 
 
 
-def gen_frame_xyz(faces_xyz):
+def gen_frame_xyz(faces_xyz, frame_idx):
     """
     The frame xyz is used exclusively in sampling parameters
     The original direction of the texel is considered the Z axis, we note the normal of this face a
     The X axis is cross(a,z)  The y axis is cross(Z,X)
     :param faces_xyz: (6,res,res,3)
+    :param frame_idx: this affects how we construct the up vector
     :return:
     """
     Z = normalized(faces_xyz, axis=-1)
     polar_axis = np.zeros_like(Z)
-    polar_axis[0:2,:,:,0] = 1
-    polar_axis[2:4,:,:,1] = 1
-    polar_axis[4:6,:,:,2] = 1
+    if frame_idx == 0 or frame_idx == 1 or frame_idx == 2:
+        polar_axis[...,frame_idx] = 1.0
+    else:
+        raise NotImplementedError
 
-    X = np.cross(polar_axis, Z)
+    X = normalized(np.cross(polar_axis, Z),axis=-1)
+
+    # This is guaranteed to be unit vector
     Y = np.cross(Z,X)
 
     return X,Y,Z
@@ -103,7 +108,7 @@ def gen_frame_weight(facex_xyz, frame_idx):
     new_x_idx, new_y_idx, new_z_idx = frame_axis_index(frame_idx)
     faces_xyz_abs = np.abs(facex_xyz)
 
-    frame_weight = np.clip(4 * np.maximum(faces_xyz_abs[:,:,new_x_idx], faces_xyz_abs[:,:,new_y_idx]) - 3,0.0,1.0)
+    frame_weight = np.clip(4 * np.maximum(faces_xyz_abs[:,:,:,new_x_idx], faces_xyz_abs[:,:,:,new_y_idx]) - 3,0.0,1.0)
 
     return frame_weight
 
@@ -127,20 +132,12 @@ def gen_theta_phi(faces_xyz,frame_idx):
     nx = nx / max_xy
     ny = ny / max_xy
 
-    # xy_flag = np.where(nx > ny, np.ones_like(nx), np.zeros_like(nx))
-    #
-    # #the y<x case
-    # tmp1 = np.where(ny <= -0.999, nx, ny)
-    # tmp2 = np.where(ny > 0.999, -nx, ny)
-    #
-    # theta = np.where()
-
 
 
     theta = np.zeros_like(nx)
     theta[(ny < nx) & (ny <= -0.999)] = nx[(ny < nx) & (ny <= -0.999)]
     theta[(ny < nx) & (ny > -0.999)] = ny[(ny < nx) & (ny > -0.999)]
-    theta[(nx <= nx) & (ny >= 0.999)] = -nx[(nx <= nx) & (ny >= 0.999)]
+    theta[(nx <= ny) & (ny >= 0.999)] = -nx[(nx <= ny) & (ny >= 0.999)]
     theta[(nx <= ny) & (ny < 0.999)] = -ny[(nx <= ny) & (ny < 0.999)]
 
 
@@ -171,7 +168,6 @@ def fetch_samples(tex_input,output_level):
     n_subtap = 4
     n_res = 128 >> output_level
     faces_xyz = texel_directions(n_res)
-    X,Y,Z = gen_frame_xyz(faces_xyz)
 
     coefficient_dirx = coefficient.fetch_coefficient("quad",output_level,0)
     coefficient_diry = coefficient.fetch_coefficient("quad",output_level,1)
@@ -184,9 +180,14 @@ def fetch_samples(tex_input,output_level):
     weight = np.zeros((6,n_res,n_res))
 
 
+    max_level = -1.0
+    min_level = 100
+
+
     # frame_idx 0 means up vector is x
     # The coefficient for this frame lies in [frame_idx * 8, (frame_idx + 1) * 8) for the last dimension
     for frame_idx in range(3):
+        X, Y, Z = gen_frame_xyz(faces_xyz, frame_idx)
         frame_weight = gen_frame_weight(faces_xyz, frame_idx)
         theta,phi,theta2,phi2 = gen_theta_phi(faces_xyz,frame_idx=frame_idx)
 
@@ -213,23 +214,34 @@ def fetch_samples(tex_input,output_level):
                 sample_z = Z * coeff_z
                 sample_level = coeff_sample_level[0][sample_idx] + coeff_sample_level[1][sample_idx] * theta2 + coeff_sample_level[2][sample_idx] * phi2
                 sample_weight = coeff_sample_weight[0][sample_idx] + coeff_sample_weight[1][sample_idx] * theta2 + coeff_sample_weight[2][sample_idx] * phi2
-
-
-
+                sample_weight = sample_weight * frame_weight
 
                 #compute sample directioin
                 sample_direction = sample_x + sample_y + sample_z
                 #project it to cube
-                max_dir = np.max(sample_direction,axis=-1)
+                max_dir = np.max(np.abs(sample_direction),axis=-1)
                 sample_direction /= np.stack((max_dir,max_dir,max_dir),axis=-1)
                 #adjust level
-                sample_level += 3/4 * np.log2( map_util.dot_vectorized_4D(sample_direction,sample_direction) )
+                j = 3/4 * np.log2( map_util.dot_vectorized_4D(sample_direction,sample_direction) )
+                sample_level += j
+
+                if sample_level.max() >= max_level:
+                    max_level = sample_level.max()
+
+                if sample_level.min() <= min_level:
+                    min_level = sample_level.min()
+
+                # print("Sample" , sample_idx + sample_group_idx * n_subtap ,", max is ",sample_level.max())
+                # print("Sample" , sample_idx + sample_group_idx * n_subtap,", min is ",sample_level.min())
 
 
                 color_tmp = interpolator.interpolate_all(sample_direction,sample_level)
 
-                color += color_tmp
-                weight ++ sample_weight
+                color += color_tmp * sample_weight
+                weight += sample_weight
+
+    print("min:",min_level,"/max:",max_level)
+
 
     #devide by weight
     weight_stack = np.stack((weight,weight,weight),axis=-1)
@@ -243,6 +255,11 @@ def fetch_samples(tex_input,output_level):
 
 
 if __name__ == '__main__':
-    mipmap_l0 = image_read.envmap_to_cubemap('exr_files/rosendal_plains_2_1k.exr',128)
-    mipmaps = interpolation.downsample_full(mipmap_l0,7)
-    fetch_samples(mipmaps,0)
+    n_mipmap_level = 9
+    high_res = 2**n_mipmap_level
+
+    mipmap_l0 = image_read.envmap_to_cubemap('exr_files/rosendal_plains_2_1k.exr',high_res)
+    mipmaps = interpolation.downsample_full(mipmap_l0,n_mipmap_level)
+
+    for i in range(7):
+        fetch_samples(mipmaps,i)

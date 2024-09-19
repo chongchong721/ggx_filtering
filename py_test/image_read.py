@@ -312,7 +312,7 @@ if __name__ == '__main__':
     img = hdri_read('exr_files/08-21_Swiss_A.hdr')
     interpolators_list = grid_interpolator(img)
     cubemap_img = loop_through_cube_face_vectorized(img, face_resolution, interpolators_list)
-    #gen_cubemap_preview_image(cubemap_img,face_resolution)
+    gen_cubemap_preview_image(cubemap_img,face_resolution,None,"swiss_lon2pi.exr")
     faces_extended = np.zeros((6,face_resolution+2,face_resolution+2,3))
 
     for face_idx in range(6):

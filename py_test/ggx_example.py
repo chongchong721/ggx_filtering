@@ -100,6 +100,7 @@ if __name__ == "__main__":
     faces_extended = np.zeros((6,130,130,1))
     faces_downsampled = np.zeros((6,64,64,1))
 
+    create_color_map(face_ndf,face_xyz)
 
     for i in range(6):
         face_extended = interpolation.extend_face(face_ndf,i)
@@ -111,7 +112,7 @@ if __name__ == "__main__":
     face_downsampled_xyz = ref_xyz(64)
 
 
-    create_color_map(face_ndf,face_xyz)
+
     create_color_map(faces_downsampled,face_downsampled_xyz)
 
     print(wh_direction)

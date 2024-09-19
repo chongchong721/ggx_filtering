@@ -558,7 +558,12 @@ def downsample(faces_extended,face_idx):
     """
 
     jacobian = map_util.jacobian_vertorized(xyz_interpolated)
-
+    jac_inverse = False
+    if jac_inverse:
+        ####
+        inverse_jacobian = 1 / jacobian
+        jacobian = inverse_jacobian
+        ####
     jacobian_sum = skimage.measure.block_reduce(jacobian,(2,2),np.sum)
     #copy(up sample) jacobian
     jacobian_sum = np.repeat(np.repeat(jacobian_sum,2,axis=0),2,axis=1)

@@ -18,7 +18,7 @@ def xyz_to_latlon(xyz:np.ndarray):
     theta = np.arccos(y)
 
 
-    phi = np.arctan2(z,x)
+    phi = np.arctan2(x,z)
 
     # move phi(longitude to positive)
     # if phi < 0.0:
@@ -35,7 +35,9 @@ def xyz_to_latlon_vectorized(xyz:np.ndarray):
     """
     x,y,z = xyz[:,0],xyz[:,1],xyz[:,2]
     theta = np.arccos(y)
-    phi = np.arctan2(z,x)
+    #arctan2(x,z) generate the same longitude in the paper
+    phi = np.arctan2(x,z)
+    #phi = np.where(phi < 0.0, phi + np.pi *2 , phi)
 
     return theta,phi
 

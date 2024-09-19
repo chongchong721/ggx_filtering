@@ -237,7 +237,7 @@ def fetch_samples(tex_input,output_level):
 
                 color_tmp = interpolator.interpolate_all(sample_direction,sample_level)
 
-                color += color_tmp * sample_weight
+                color += color_tmp * np.stack((sample_weight,sample_weight,sample_weight),axis=-1)
                 weight += sample_weight
 
     print("min:",min_level,"/max:",max_level)
@@ -255,11 +255,17 @@ def fetch_samples(tex_input,output_level):
 
 
 if __name__ == '__main__':
-    n_mipmap_level = 9
+    n_mipmap_level = 7
     high_res = 2**n_mipmap_level
 
-    mipmap_l0 = image_read.envmap_to_cubemap('exr_files/rosendal_plains_2_1k.exr',high_res)
+    mipmap_l0 = image_read.envmap_to_cubemap('exr_files/08-21_Swiss_A.hdr',high_res)
     mipmaps = interpolation.downsample_full(mipmap_l0,n_mipmap_level)
 
-    for i in range(7):
-        fetch_samples(mipmaps,i)
+    #write mipmap for preview
+    #image_read.gen_cubemap_preview_image(mipmaps[1],high_res>>1,None,filename="preview_l1.exr")
+    #image_read.gen_cubemap_preview_image(mipmaps[3],high_res>>3,None,filename="preview_l3.exr")
+
+    this_face = fetch_samples(mipmaps,1)
+    image_read.gen_cubemap_preview_image(this_face,high_res>>1,None,"filter_l1_inv_j.exr")
+    this_face = fetch_samples(mipmaps,3)
+    image_read.gen_cubemap_preview_image(this_face,high_res>>3,None,"filter_l3_inv_j.exr")

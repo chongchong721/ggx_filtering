@@ -3,8 +3,7 @@ Material class
 Direction should be in shape of [3,1] or [3,N]
 here
 """
-
-
+from datetime import datetime
 
 import numpy as np
 import math
@@ -108,6 +107,7 @@ class GGX:
         self.eta_i = eta_i
         self.eta_t = eta_t
         self.albedo = albedo
+        self.rng = np.random.default_rng(int(datetime.now().timestamp()))
 
     # Ramanujan's estimation of ellipse perimeter
     def ellipse_perimiter(self, a, b):
@@ -366,3 +366,35 @@ class GGX:
         ndf = self.ndf(wm)
         cos = math.fabs(mat_util.dot(wi, wm))
         return g1 * cos * ndf / np.max([wi[2][0],sys.float_info.epsilon])
+
+
+    def sample_ndf(self,u = None, v = None, n_normals = 1):
+        """
+        only works for isotropic
+        importance sampling ndf
+        :param uv: uv random variables in shape[N,2]
+        :param n_normals:
+        :return:
+        """
+
+
+        assert self.ax == self.ay
+
+        if u is not None and v is not None:
+            if n_normals > 1:
+                assert u.szie == v.size
+        else:
+            u = self.rng.random(n_normals)
+            v = self.rng.random(n_normals)
+
+        theta = np.arctan(self.ax * np.sqrt(u) / np.sqrt(1-u))
+        phi = np.pi * 2 * v
+
+        if n_normals > 1:
+            normals = mat_util.to_cartesian_vectorized(theta,phi)
+            normals = normals.T
+        else:
+            normals = mat_util.to_cartesian(theta,phi)
+            normals = normals.T
+
+        return normals

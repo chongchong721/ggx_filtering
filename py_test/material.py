@@ -3,6 +3,7 @@ Material class
 Direction should be in shape of [3,1] or [3,N]
 here
 """
+import builtins
 from datetime import datetime
 
 import numpy as np
@@ -373,7 +374,7 @@ class GGX:
         only works for isotropic
         importance sampling ndf
         :param uv: uv random variables in shape[N,2]
-        :param n_normals:
+        :param n_normals: [N,3]
         :return:
         """
 
@@ -398,3 +399,29 @@ class GGX:
             normals = normals.T
 
         return normals
+
+    def sample_ndf_world(self,u = None, v = None, n_normals = 1, world_n = np.array([0,0,1])):
+        #TODO check this is correct
+        normals = self.sample_ndf(u, v, n_normals)
+        # Convert this from local to world
+        up_vector = np.zeros_like(normals)
+        # find the face
+        if world_n.max() == 1.0:
+            idx = np.argmax(world_n)
+        elif world_n.min() == -1.0:
+            idx = np.argmin(world_n)
+        else:
+            raise NotImplementedError
+
+        normals[:,idx] = 1.0
+
+        world_n = np.tile(world_n, (n_normals, 1))
+        tangentX = mat_util.normalized(np.cross(up_vector, world_n,axis=-1))
+        tangentY = np.cross(world_n, tangentX, axis=-1)
+
+
+        #compute world directions for samples
+        samples = tangentX * np.tile(normals[:,0],(3,1)).T + \
+                  tangentY * np.tile(normals[:,1],(3,1)).T + \
+                  world_n * np.tile(normals[:,2],(3,1)).T
+        return samples

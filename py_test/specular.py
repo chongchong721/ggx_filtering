@@ -1,10 +1,13 @@
 import numpy as np
+from scipy.stats import expon
 
 
 def roughness_from_gloss(gloss):
     GGX_MAX_SPEC_POWER = 18
     exponent = np.pow(2, gloss * GGX_MAX_SPEC_POWER)
-    return np.pow(2.0/(1 + exponent),0.25)
+    #return np.pow(2.0/(1 + exponent),0.25)
+    #?? See Material Advances in Call of Duty:WWII
+    return np.power(2.0/(1+exponent),0.5)
 
 
 class level_params:

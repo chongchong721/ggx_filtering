@@ -367,7 +367,7 @@ def recurrence():
     print(kernel)
 
 
-def downsample(faces_extended,face_idx):
+def downsample(faces_extended,face_idx, jac_inverse = False):
     """
     Downsample the face using bspline interpolation
 
@@ -379,6 +379,7 @@ def downsample(faces_extended,face_idx):
 
     :param faces_extended: faces extended in shape of (6,N+2,N+2,3)
     :param face_idx: the index of the face to be downsampled
+    :param jac_inverse: whether to invert the Jacobian?
     :return:
     """
     assert faces_extended.shape[1] == faces_extended.shape[2]
@@ -558,7 +559,6 @@ def downsample(faces_extended,face_idx):
     """
 
     jacobian = map_util.jacobian_vertorized(xyz_interpolated)
-    jac_inverse = False
     if jac_inverse:
         ####
         inverse_jacobian = 1 / jacobian
@@ -798,7 +798,7 @@ class trilinear_mipmap_interpolator:
 
         final_color = final_color.reshape((original_shape[:-1] + (3,)))
 
-        print("Done")
+        #print("Done")
 
         return final_color
 

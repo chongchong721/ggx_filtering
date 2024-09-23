@@ -1,5 +1,5 @@
 import numpy as np
-
+import numba
 
 """
 currently long lat assume +Y is up
@@ -301,7 +301,6 @@ def uv_to_xyz(uv, idx):
 
     return vec
 
-
 def jacobian_vertorized(xyz):
     """
 
@@ -315,6 +314,10 @@ def jacobian_vertorized(xyz):
     elif xyz.ndim == 3:
         power_2 = xyz * xyz
         sum_xyz = np.sum(power_2, axis=2)
+        j = 1 / np.pow(sum_xyz,3/2)
+    elif xyz.ndim == 4:
+        power_2 = xyz * xyz
+        sum_xyz = np.sum(power_2, axis=3)
         j = 1 / np.pow(sum_xyz,3/2)
     else:
         raise NotImplementedError

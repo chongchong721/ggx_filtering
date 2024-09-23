@@ -266,6 +266,6 @@ if __name__ == '__main__':
     #image_read.gen_cubemap_preview_image(mipmaps[3],high_res>>3,None,filename="preview_l3.exr")
 
     this_face = fetch_samples(mipmaps,1)
-    image_read.gen_cubemap_preview_image(this_face,high_res>>1,None,"filter_l1_inv_j.exr")
+    image_read.gen_cubemap_preview_image(this_face,high_res>>1,None,"filter_l1.exr")
     this_face = fetch_samples(mipmaps,3)
-    image_read.gen_cubemap_preview_image(this_face,high_res>>3,None,"filter_l3_inv_j.exr")
+    image_read.gen_cubemap_preview_image(this_face,high_res>>3,None,"filter_l3.exr")

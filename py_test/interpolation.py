@@ -392,8 +392,8 @@ def downsample(faces_extended,face_idx, jac_inverse = False):
     # fetch bilinear interpolation samples
     interpolators = []
 
-    row_range = np.arange(0,face_extended_res)
-    col_range = np.arange(0,face_extended_res)
+    row_range = np.arange(0,face_extended_res) + 0.5
+    col_range = np.arange(0,face_extended_res) + 0.5
 
     for chan_idx in range(channel_count):
         interpolator = scipy.interpolate.RegularGridInterpolator((row_range,col_range),face_extended[:,:,chan_idx])
@@ -413,8 +413,12 @@ def downsample(faces_extended,face_idx, jac_inverse = False):
 
 
     #generate all the points needed in the above comment
-    point_idx_pattern1 = np.arange(3/4,face_extended_res - 1 - 1/4, 2)
-    point_idx_pattern2 = np.arange(2+1/4,face_extended_res - 1 - 3/4 + 2, 2)
+
+    #point pattern 1, start from 1.25 -> 3.25 -> 5.25 -> res - 2.75
+
+    point_idx_pattern1 = np.arange(5/4 ,face_extended_res - 3/4, 2)
+    #point pattern 2, start from 2.75 -> 4.75 -> res - 1.25
+    point_idx_pattern2 = np.arange(2+3/4,face_extended_res - 1 - 1/4 + 2, 2)
 
     point_idx = np.insert(point_idx_pattern2, np.arange(0,point_idx_pattern2.size),point_idx_pattern1)
 
@@ -519,7 +523,7 @@ def downsample(faces_extended,face_idx, jac_inverse = False):
     # now interpolate uv
     uv_interpolators = []
     for idx in range(2):
-        interpolator = scipy.interpolate.RegularGridInterpolator((np.arange(0,face_extended_res),np.arange(0,face_extended_res)),uv_table[:,:,idx])
+        interpolator = scipy.interpolate.RegularGridInterpolator((np.arange(0,face_extended_res) + 0.5,np.arange(0,face_extended_res) + 0.5),uv_table[:,:,idx])
         uv_interpolators.append(interpolator)
 
     uv_interpolated = np.zeros((point_xs.shape[0],point_xs.shape[1],2))
@@ -595,7 +599,7 @@ def downsample(faces_extended,face_idx, jac_inverse = False):
     # print("test")
 
 
-def downsample_all_faces(faces):
+def downsample_all_faces(faces, j_inv = False):
     """
 
     :param faces: original faces without extending
@@ -615,14 +619,14 @@ def downsample_all_faces(faces):
         faces_extended[face_idx] = face
 
     for face_idx in range(6):
-        new_face = downsample(faces_extended,face_idx)
+        new_face = downsample(faces_extended,face_idx, j_inv)
         new_faces[face_idx] = new_face
 
     return new_faces
 
 
 
-def downsample_full(original_map, n_mipmap_level):
+def downsample_full(original_map, n_mipmap_level, j_inv = False):
     """
     Takes the original highres cubemap, make a level of downsampled cubemap
     :param original_map:
@@ -637,7 +641,7 @@ def downsample_full(original_map, n_mipmap_level):
         if i == 0:
             mipmaps.append(original_map)
         else:
-            new_level_map = downsample_all_faces(previous_level_map)
+            new_level_map = downsample_all_faces(previous_level_map, j_inv)
             mipmaps.append(new_level_map)
             previous_level_map = new_level_map
 

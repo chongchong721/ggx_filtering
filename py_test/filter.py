@@ -11,6 +11,7 @@ import mat_util
 import coefficient
 import interpolation
 import image_read
+from tqdm import tqdm
 
 
 def gen_tex_levels(n_level,n_high_res):
@@ -33,20 +34,26 @@ def gen_face_uv(n_res):
     return uv_table
 
 
-def frame_axis_index(frame_idx):
+def frame_axis_index(frame_idx, paper = False):
     """
     There are three frames, the first one consider x the up-axis. the second one consider y the up-axis
     the third one consider z the up-axis.
     Note: all system should use the same convention, we choose right-hand here
     :param frame_idx: the index of the frame. 0 means x as up, 1 means y as up, 2 means z as up
+    :param paper: whether to follow what the code provided by the author does, there is a mismatch in axis index
     :return:
     """
-    # the original z-axis in a traditional coordinate system
-    up_axis = [0,1,2]
-    # the original x-axis in a traditional coordinate system
-    other_axis0 = [1,2,0]
-    # the original y-axis in a traditional coordinate system
-    other_axis1 = [2,0,1]
+    if not paper:
+        # the original z-axis in a traditional coordinate system
+        up_axis = [0,1,2]
+        # the original x-axis in a traditional coordinate system
+        other_axis0 = [1,2,0]
+        # the original y-axis in a traditional coordinate system
+        other_axis1 = [2,0,1]
+    else:
+        up_axis = [0,1,2]
+        other_axis0 = [1,0,0]
+        other_axis1 = [2,2,1]
 
     return other_axis0[frame_idx],other_axis1[frame_idx],up_axis[frame_idx]
 
@@ -98,14 +105,14 @@ def gen_frame_xyz(faces_xyz, frame_idx):
     return X,Y,Z
 
 
-def gen_frame_weight(facex_xyz, frame_idx):
+def gen_frame_weight(facex_xyz, frame_idx, follow_code = False):
     """
     Compute frame weight for each texel according to the paper, the up/bot face have little weight
     :param facex_xyz:
     :param frame_idx:
     :return:
     """
-    new_x_idx, new_y_idx, new_z_idx = frame_axis_index(frame_idx)
+    new_x_idx, new_y_idx, new_z_idx = frame_axis_index(frame_idx, follow_code)
     faces_xyz_abs = np.abs(facex_xyz)
 
     frame_weight = np.clip(4 * np.maximum(faces_xyz_abs[:,:,:,new_x_idx], faces_xyz_abs[:,:,:,new_y_idx]) - 3,0.0,1.0)
@@ -113,14 +120,14 @@ def gen_frame_weight(facex_xyz, frame_idx):
     return frame_weight
 
 
-def gen_theta_phi(faces_xyz,frame_idx):
+def gen_theta_phi(faces_xyz,frame_idx, follow_code = False):
     """
     Generate a theta phi table of shape (6,res,res,2) according to the paper
     :param faces_xyz: original xyz direction for each texel
     :param frame_idx: the index of the frame, used to determine the new x,y,z axis
     :return: theta,phi,theta^2,phi^2
     """
-    new_x_idx, new_y_idx, new_z_idx = frame_axis_index(frame_idx)
+    new_x_idx, new_y_idx, new_z_idx = frame_axis_index(frame_idx,follow_code)   #write mipmap for preview
 
     #TODO: Why use abs(z) in original code?
     nx = faces_xyz[:,:,:,new_x_idx]
@@ -154,7 +161,7 @@ def gen_theta_phi(faces_xyz,frame_idx):
 
 
 
-def fetch_samples(tex_input,output_level):
+def fetch_samples(tex_input,output_level, follow_code = False):
     """
 
     :param tex_input: the all level cubemap input
@@ -188,8 +195,9 @@ def fetch_samples(tex_input,output_level):
     # The coefficient for this frame lies in [frame_idx * 8, (frame_idx + 1) * 8) for the last dimension
     for frame_idx in range(3):
         X, Y, Z = gen_frame_xyz(faces_xyz, frame_idx)
-        frame_weight = gen_frame_weight(faces_xyz, frame_idx)
-        theta,phi,theta2,phi2 = gen_theta_phi(faces_xyz,frame_idx=frame_idx)
+        frame_weight = gen_frame_weight(faces_xyz, frame_idx, follow_code)
+        theta,phi,theta2,phi2 = gen_theta_phi(faces_xyz,frame_idx=frame_idx,follow_code=follow_code)
+        fw_t = gen_frame_weight(faces_xyz,frame_idx=frame_idx,follow_code=not follow_code)
 
         # For each frame, there are 8(n_tap) * 1/2/4(n_subtap) samples to get
         for sample_group_idx in range(n_tap):
@@ -258,14 +266,27 @@ if __name__ == '__main__':
     n_mipmap_level = 7
     high_res = 2**n_mipmap_level
 
+    j_inverse = False
+    code_follow = False
+
     mipmap_l0 = image_read.envmap_to_cubemap('exr_files/08-21_Swiss_A.hdr',high_res)
-    mipmaps = interpolation.downsample_full(mipmap_l0,n_mipmap_level)
+    mipmaps = interpolation.downsample_full(mipmap_l0,n_mipmap_level,j_inverse)
 
-    #write mipmap for preview
-    #image_read.gen_cubemap_preview_image(mipmaps[1],high_res>>1,None,filename="preview_l1.exr")
-    #image_read.gen_cubemap_preview_image(mipmaps[3],high_res>>3,None,filename="preview_l3.exr")
 
-    this_face = fetch_samples(mipmaps,1)
-    image_read.gen_cubemap_preview_image(this_face,high_res>>1,None,"filter_l1.exr")
-    this_face = fetch_samples(mipmaps,3)
-    image_read.gen_cubemap_preview_image(this_face,high_res>>3,None,"filter_l3.exr")
+    # #generate preview images
+    # for output_level in range(n_mipmap_level):
+    #     image_read.gen_cubemap_preview_image(mipmaps[output_level],high_res>>output_level,filename="preview_l"+str(output_level)+".exr")
+
+
+
+    for output_level in tqdm(range(n_mipmap_level)):
+        this_face = fetch_samples(mipmaps, output_level, code_follow)
+        if not j_inverse:
+            filename = "filter_l" + str(output_level) + ".exr"
+        else:
+            filename = "filter_l" + str(output_level) + "_j_inv.exr"
+
+        if code_follow:
+            filename = filename[:6] + "_fcode" + filename[6:]
+
+        image_read.gen_cubemap_preview_image(this_face, high_res >> output_level, None, filename)

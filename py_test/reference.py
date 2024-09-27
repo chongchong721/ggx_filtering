@@ -147,15 +147,20 @@ if __name__ == '__main__':
 
     file_list = ["08-21_Swiss_A.hdr","08-08_Sunset_D.hdr","04-29_Night_B.hdr","04-07_Fila_lnter.hdr"]
 
+    #post_fix = ""
+    post_fix = "_16"
+    #post_fix = "_16_025"  #pow(,.25f)
+
+
     for file_name in file_list:
         print("For HDR map ", file_name)
 
         mipmap_l0 = image_read.envmap_to_cubemap('exr_files/' + file_name, 128)
-        level = specular.cubemap_level_params()
+        level = specular.cubemap_level_params(18,True)
 
         for n_lev in range(len(level)):
             print("generating level ", n_lev," result")
-            save_file_name = file_name[6:-4] + "_" + str(level[n_lev].res) + "_" + str(level[n_lev].roughness)[:6] + ".npy"
+            save_file_name = file_name[6:-4] + "_" + str(level[n_lev].res) + "_" + str(level[n_lev].roughness)[:6]+ post_fix + ".npy"
             arr = np.load("./refs/" + save_file_name)
             image_read.gen_cubemap_preview_image(arr, level[n_lev].res,filename="./refs/" + save_file_name[:-4] + ".hdr")
             #compute_reference(mipmap_l0,128,level[n_lev].res,level[n_lev].roughness, save_file_name)

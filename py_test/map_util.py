@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import numpy as np
 import numba
 
@@ -377,3 +379,42 @@ def dot_vectorized_4D(v1, v2):
     """
     result = np.einsum('ijkl,ijkl->ijk', v1, v2)
     return result
+
+
+
+
+
+def random_dir_sphere(uv = None, n_dir = 1):
+    if uv is None:
+        rng = np.random.default_rng(int(datetime.now().timestamp()))
+        u = rng.random(n_dir)
+        v = rng.random(n_dir)
+    else:
+        assert uv.shape[1] == 2 and uv.shape[0] == n_dir
+        u = uv[:, 0]
+        v = uv[:, 1]
+
+    #uniformly sample direction from a sphere
+    phi = u * 2 * np.pi
+    v *= 2
+    v -= 1
+    cos_theta = v
+    sin_theta = np.sqrt(1 - cos_theta * cos_theta)
+
+    x = np.cos(phi) * sin_theta
+    y = np.sin(phi) * sin_theta
+    z = cos_theta
+
+    return np.stack((x, y, z), axis=1)
+
+
+def dir_to_cube_coordinate(xyz):
+    max = np.max(np.abs(xyz),axis=-1)
+    max_stack = np.stack((max,max,max),axis=-1)
+    return xyz/max_stack
+
+
+def random_dir_cube(uv = None, n_dir = 1):
+    xyz = random_dir_sphere(uv,n_dir)
+    xyz_cube = dir_to_cube_coordinate(xyz)
+    return xyz_cube

@@ -367,6 +367,36 @@ def recurrence():
     print(kernel)
 
 
+def gen_extended_uv_table(face_res):
+    face_extended_res = face_res + 2
+    left_uv = gen_boundary_uv_for_interp('L', False, face_res)
+    right_uv = gen_boundary_uv_for_interp('R', False, face_res)
+    up_uv = gen_boundary_uv_for_interp('U', False, face_res)
+    down_uv = gen_boundary_uv_for_interp('D', False, face_res)
+
+    # generate face uv
+    uv_table = np.zeros((face_extended_res, face_extended_res, 2))
+    uv_ascending_order = map_util.create_pixel_index(face_res, 1)
+    uv_ascending_order /= face_res
+    epsilon = uv_ascending_order.min()
+
+    # yv for u, xv for v
+    xv, yv = np.meshgrid(np.flip(uv_ascending_order), uv_ascending_order, indexing='ij')
+    uv_table[1:-1, 1:-1, 0] = yv
+    uv_table[1:-1, 1:-1, 1] = xv
+
+    uv_table[1:-1, 0, :] = left_uv
+    uv_table[1:-1, -1, :] = right_uv
+    uv_table[0, 1:-1, :] = up_uv
+    uv_table[-1, 1:-1, :] = down_uv
+
+    # corner
+    uv_table[0, 0, :] = np.array([-epsilon, 1 + epsilon])
+    uv_table[0, -1, :] = np.array([1 + epsilon, 1 + epsilon])
+    uv_table[-1, 0, :] = np.array([-epsilon, -epsilon])
+    uv_table[-1, -1, :] = np.array([1 + epsilon, -epsilon])
+    return uv_table
+
 def downsample(faces_extended,face_idx, jac_inverse = False):
     """
     Downsample the face using bspline interpolation
@@ -489,36 +519,39 @@ def downsample(faces_extended,face_idx, jac_inverse = False):
 
     #uv originate from bottom-left
 
-    left_uv = gen_boundary_uv_for_interp('L',False,face_res)
-    right_uv = gen_boundary_uv_for_interp('R',False,face_res)
-    up_uv = gen_boundary_uv_for_interp('U',False,face_res)
-    down_uv = gen_boundary_uv_for_interp('D',False,face_res)
+    # left_uv = gen_boundary_uv_for_interp('L',False,face_res)
+    # right_uv = gen_boundary_uv_for_interp('R',False,face_res)
+    # up_uv = gen_boundary_uv_for_interp('U',False,face_res)
+    # down_uv = gen_boundary_uv_for_interp('D',False,face_res)
+    #
+    #
+    #
+    #
+    # # generate face uv
+    # uv_table = np.zeros((face_extended_res,face_extended_res,2))
+    # uv_ascending_order = map_util.create_pixel_index(face_res,1)
+    # uv_ascending_order /= face_res
+    # epsilon = uv_ascending_order.min()
+    #
+    #
+    # # yv for u, xv for v
+    # xv, yv = np.meshgrid(np.flip(uv_ascending_order),uv_ascending_order,indexing='ij')
+    # uv_table[1:-1,1:-1,0] = yv
+    # uv_table[1:-1,1:-1,1] = xv
+    #
+    # uv_table[1:-1,0,:] = left_uv
+    # uv_table[1:-1,-1,:] = right_uv
+    # uv_table[0,1:-1,:] = up_uv
+    # uv_table[-1,1:-1,:] = down_uv
+    #
+    # #corner
+    # uv_table[0,0,:] = np.array([-epsilon,1+epsilon])
+    # uv_table[0,-1,:] = np.array([1+epsilon,1+epsilon])
+    # uv_table[-1,0,:] = np.array([-epsilon,-epsilon])
+    # uv_table[-1,-1,:] = np.array([1+epsilon,-epsilon])
 
+    uv_table = gen_extended_uv_table(face_res)
 
-
-
-    # generate face uv
-    uv_table = np.zeros((face_extended_res,face_extended_res,2))
-    uv_ascending_order = map_util.create_pixel_index(face_res,1)
-    uv_ascending_order /= face_res
-    epsilon = uv_ascending_order.min()
-
-
-    # yv for u, xv for v
-    xv, yv = np.meshgrid(np.flip(uv_ascending_order),uv_ascending_order,indexing='ij')
-    uv_table[1:-1,1:-1,0] = yv
-    uv_table[1:-1,1:-1,1] = xv
-
-    uv_table[1:-1,0,:] = left_uv
-    uv_table[1:-1,-1,:] = right_uv
-    uv_table[0,1:-1,:] = up_uv
-    uv_table[-1,1:-1,:] = down_uv
-
-    #corner
-    uv_table[0,0,:] = np.array([-epsilon,1+epsilon])
-    uv_table[0,-1,:] = np.array([1+epsilon,1+epsilon])
-    uv_table[-1,0,:] = np.array([-epsilon,-epsilon])
-    uv_table[-1,-1,:] = np.array([1+epsilon,-epsilon])
 
     # now interpolate uv
     uv_interpolators = []

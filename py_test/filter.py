@@ -197,7 +197,6 @@ def fetch_samples(tex_input,output_level, follow_code = False):
         X, Y, Z = gen_frame_xyz(faces_xyz, frame_idx)
         frame_weight = gen_frame_weight(faces_xyz, frame_idx, follow_code)
         theta,phi,theta2,phi2 = gen_theta_phi(faces_xyz,frame_idx=frame_idx,follow_code=follow_code)
-        fw_t = gen_frame_weight(faces_xyz,frame_idx=frame_idx,follow_code=not follow_code)
 
         # For each frame, there are 8(n_tap) * 1/2/4(n_subtap) samples to get
         for sample_group_idx in range(n_tap):

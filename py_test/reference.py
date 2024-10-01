@@ -141,6 +141,25 @@ def compute_reference(input_map, cubemap_res, ref_res, GGX_alpha, save_file_name
 
 
 
+def compute_ggx_distribution_reference(res,ggx_alpha,normal_direction):
+    """
+    Compute the reference GGX in cube map form. normal_direction is the assumed GGX normal(where there is highest pdf)
+    :param res:
+    :param ggx_alpha:
+    :param normal_direction:
+    :return:
+    """
+    ggx = material.GGX(ggx_alpha,ggx_alpha)
+    assert normal_direction.size == 3
+    normal_direction /= np.linalg.norm(normal_direction)
+    directions = texel_directions(res)
+    directions = mat_util.normalized(directions,axis=-1)
+
+    cosine = np.dot(directions,normal_direction)
+    ndf = ggx.ndf_isotropic(cosine)
+
+    return ndf
+
 
 if __name__ == '__main__':
     #test(128)

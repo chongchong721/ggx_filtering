@@ -115,7 +115,7 @@ def gen_frame_weight(facex_xyz, frame_idx, follow_code = False):
     new_x_idx, new_y_idx, new_z_idx = frame_axis_index(frame_idx, follow_code)
     faces_xyz_abs = np.abs(facex_xyz)
 
-    frame_weight = np.clip(4 * np.maximum(faces_xyz_abs[:,:,:,new_x_idx], faces_xyz_abs[:,:,:,new_y_idx]) - 3,0.0,1.0)
+    frame_weight = np.clip(4 * np.maximum(faces_xyz_abs[...,new_x_idx], faces_xyz_abs[...,new_y_idx]) - 3,0.0,1.0)
 
     return frame_weight
 
@@ -130,9 +130,9 @@ def gen_theta_phi(faces_xyz,frame_idx, follow_code = False):
     new_x_idx, new_y_idx, new_z_idx = frame_axis_index(frame_idx,follow_code)   #write mipmap for preview
 
     #TODO: Why use abs(z) in original code?
-    nx = faces_xyz[:,:,:,new_x_idx]
-    ny = faces_xyz[:,:,:,new_y_idx]
-    nz = faces_xyz[:,:,:,new_z_idx]
+    nx = faces_xyz[...,new_x_idx]
+    ny = faces_xyz[...,new_y_idx]
+    nz = faces_xyz[...,new_z_idx]
     max_xy = np.maximum(np.abs(nx),np.abs(ny))
 
     #normalize nx,ny, in 2/3 of the cases, one of nx and ny should be 1 without normalizing it

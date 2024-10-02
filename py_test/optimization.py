@@ -2,8 +2,11 @@ import numpy as np
 import map_util
 import mat_util
 from datetime import datetime
-from filter import gen_frame_xyz,gen_frame_weight,texel_directions,frame_axis_index
+from filter import gen_frame_xyz,gen_frame_weight,texel_directions,frame_axis_index,gen_theta_phi
 from interpolation import gen_extended_uv_table,get_edge_information
+from reference import compute_ggx_distribution_reference
+
+import scipy
 
 
 """
@@ -180,10 +183,10 @@ def process_bilinear_samples(trilerp_sample_info:{},mipmaps:[]):
 
 
         #p0
-        np.add.at(extended_mipmap_cur_level,(cur_face,v_location,u_location_left),p0)
-        np.add.at(extended_mipmap_cur_level,(cur_face,v_location,u_location),p1)
-        np.add.at(extended_mipmap_cur_level,(cur_face,v_location_bot,u_location_left),p2)
-        np.add.at(extended_mipmap_cur_level,(cur_face,v_location_bot,u_location),p3)
+        np.add.at(extended_mipmap_cur_level,(cur_face,v_location,u_location_left),p0.reshape(-1,chan_count))
+        np.add.at(extended_mipmap_cur_level,(cur_face,v_location,u_location),p1.reshape(-1,chan_count))
+        np.add.at(extended_mipmap_cur_level,(cur_face,v_location_bot,u_location_left),p2.reshape(-1,chan_count))
+        np.add.at(extended_mipmap_cur_level,(cur_face,v_location_bot,u_location),p3.reshape(-1,chan_count))
 
 
         # now move the extended boundaries to where they belong
@@ -452,32 +455,137 @@ def compute_contribution(location,level,initial_weight,n_level):
 
 
 def L1_error_one_texel(ggx_kernel, contribution_map):
-    l1_loss = np.abs(ggx_kernel - contribution_map)
-    return np.average(l1_loss)
-
-
-
-
-def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, res):
     """
-    How does frame weight work on the optimization part?
-    :param texel_direction:
-    :param n_sample_per_frame:
+    Comparison should be made between *normalized* map
+    :param ggx_kernel:
+    :param contribution_map:
     :return:
     """
+
+    l1_loss = np.abs(ggx_kernel - contribution_map / np.sum(contribution_map))
+    return l1_loss
+
+
+
+def test_optimize(ggx_alpha,res,texel_direction,n_sample_per_frame):
+    ggx_ref = compute_ggx_distribution_reference(res,ggx_alpha, texel_direction)
+
+    #normalize ggx kernel
+    ggx_ref /= np.sum(ggx_ref)
+
     rng = np.random.default_rng(int(datetime.now().timestamp()))
+    #initialize some random parameter very close to zero?
+    param = rng.random(n_sample_per_frame * 3 * 5 * 3)
+    #param /= 50.0
 
-    #a single coefficient table in shape [5,3,nsample_per_frame * 3]
+    result = scipy.optimize.minimize(error_func,param,args=(texel_direction,n_sample_per_frame,ggx_ref),method='BFGS', options={'disp':True,'gtol':1e-4})
 
-    coefficient_table = rng.random((5,3,n_sample_per_frame*3))
 
-    directions = texel_direction(res)
-    directions_normalized = mat_util.normalize(directions)
+    print("done")
+
+
+def error_func(x, texel_direction, n_sample_per_frame, ggx_ref):
+    """
+        A wrapper to compute error as scipy required
+    :param x:
+    :param texel_direction:
+    :param n_sample_per_frame:
+    :param ggx_ref:
+    :return:
+    """
+    x = x.reshape((5,3,n_sample_per_frame*3))
+    error = test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_ref, x)
+    return error
+
+
+
+
+
+def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_ref, coef_table = None):
+    """
+    How does frame weight work on the optimization part?
+    :param texel_direction: the one texel we are testing on optimization
+    :param n_sample_per_frame:
+    :param ggx_ref: ggx reference kernel of size (6,res,res,1)
+    :return:
+    """
+    if coef_table is None:
+        rng = np.random.default_rng(int(datetime.now().timestamp()))
+
+        #a single coefficient table in shape [5,3,nsample_per_frame * 3]
+
+        coefficient_table = rng.random((5,3,n_sample_per_frame*3))
+    else:
+        coefficient_table = coef_table
+
 
     #frame_weight:
     frame_weight_list = []
+    theta_phi_list = []
+    unnormalized_texel_direction = texel_direction / np.max(np.abs(texel_direction))
     for i in range(3):
-        x_idx,y_idx,z_idx = frame_axis_index(i)
+        frame_weight_list.append(gen_frame_weight(unnormalized_texel_direction,i))
+        theta_phi_list.append(gen_theta_phi(unnormalized_texel_direction,i))
+
+    all_directions = []
+    all_levels = []
+    all_weights = []
+
+    for i in range(3):
+        X,Y,Z = gen_frame_xyz(texel_direction,i)
+
+        _,_,theta2,phi2 = theta_phi_list[i]
+
+        coeff_start = i * n_sample_per_frame
+        coeff_end = coeff_start + n_sample_per_frame
+
+        coeff_x_table = coefficient_table[0,:,coeff_start:coeff_end]
+        coeff_y_table = coefficient_table[1,:,coeff_start:coeff_end]
+        coeff_z_table = coefficient_table[2,:,coeff_start:coeff_end]
+        coeff_level_table = coefficient_table[3,:,coeff_start:coeff_end]
+        coeff_weight_table = coefficient_table[4,:,coeff_start:coeff_end]
+
+        coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2
+        coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2
+        coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2
+
+        coeff_x = np.stack((coeff_x, coeff_x, coeff_x), axis=-1)
+        coeff_y = np.stack((coeff_y, coeff_y, coeff_y), axis=-1)
+        coeff_z = np.stack((coeff_z, coeff_z, coeff_z), axis=-1)
+
+        level = coeff_level_table[0] + coeff_level_table[1] * theta2 + coeff_level_table[2] * phi2
+        weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2
+
+        sample_direction = coeff_x * X + coeff_y * Y + coeff_z * Z
+        max_dir = np.max(np.abs(sample_direction), axis=-1)
+        sample_direction /= np.stack((max_dir, max_dir, max_dir), axis=-1)
+
+        weight_cur_frame = weight * frame_weight_list[i]
+
+        all_weights.append(weight_cur_frame)
+        all_levels.append(level)
+        all_directions.append(sample_direction)
+
+
+    sample_direction = np.concatenate((all_directions[0],all_directions[1],all_directions[2]))
+    sample_level = np.concatenate((all_levels[0],all_levels[1],all_levels[2]))
+    sample_weight = np.concatenate((all_weights[0],all_weights[1],all_weights[2]))
+
+
+    result = compute_contribution(sample_direction,sample_level,sample_weight,7)
+
+    e_arr = L1_error_one_texel(ggx_ref,result)
+
+    e = np.sum(e_arr)
+    #e = np.average(e_arr)
+
+    return e
+
+
+
+
+
+
 
 
 
@@ -487,21 +595,36 @@ def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, res):
 
 
 if __name__ == "__main__":
+
+
+
+
     #dummy location
 
     #test if reverse work as desired
 
-    face = 5
+    face = 4
     u = 0.8
     v = 0.2
     location_global= map_util.uv_to_xyz((u,v),face)
     location_global = location_global.reshape((1,-1))
+    u = 0.2
+    location_global2 = map_util.uv_to_xyz((u,v),face).reshape((1,-1))
 
-    level_global = np.array([5.4])
-    n_level_global = 7
-    initial_weight_global = np.array([1.0])
+    location_global = np.concatenate((location_global,location_global2))
 
-    t = initialize_mipmaps(n_level_global)
-    sample_info = process_trilinear_samples(location_global, level_global, n_level_global,initial_weight_global)
-    t = process_bilinear_samples(sample_info,t)
-    final_image = push_back(t)
+    #BFGS optimization test
+    #test_optimize(0.01,128,location_global[0:1,:],8)
+
+    ggx = compute_ggx_distribution_reference(128,0.01,location_global[0:1,:])
+    #
+    test_one_texel_full_optimization(location_global[0:1,:],8,ggx)
+    #
+    # level_global = np.array([5.4,3.2])
+    # n_level_global = 7
+    # initial_weight_global = np.array([1.0,1.0])
+    #
+    # t = initialize_mipmaps(n_level_global)
+    # sample_info = process_trilinear_samples(location_global, level_global, n_level_global,initial_weight_global)
+    # t = process_bilinear_samples(sample_info,t)
+    # final_image = push_back(t)

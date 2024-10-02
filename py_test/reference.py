@@ -155,10 +155,10 @@ def compute_ggx_distribution_reference(res,ggx_alpha,normal_direction):
     directions = texel_directions(res)
     directions = mat_util.normalized(directions,axis=-1)
 
-    cosine = np.dot(directions,normal_direction)
+    cosine = np.dot(directions,normal_direction.flatten())
     ndf = ggx.ndf_isotropic(cosine)
 
-    return ndf
+    return ndf.reshape(ndf.shape+(1,))
 
 
 if __name__ == '__main__':

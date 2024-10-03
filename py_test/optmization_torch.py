@@ -10,6 +10,8 @@ from reference import compute_ggx_distribution_reference
 
 import scipy
 import torch
+import torch.nn as nn
+import torch.optim as optim
 
 """
 Optimization routine
@@ -19,6 +21,30 @@ All the mipmaps here have only one channel, which is the weight/contribution
 """
 
 chan_count = 1
+
+
+def gen_path(is_constant,texel_location,current_loss):
+    name = ""
+    if is_constant:
+        name += "constant_"
+    else:
+        name += "quad_"
+    texel_location = texel_location.flatten()
+    x = texel_location[0]
+    y = texel_location[1]
+    z = texel_location[2]
+    location_text = "{.2f}_{.2f}_{.2f}_".format(x,y,z)
+    loss_text = "loss{.3f}".format(current_loss)
+    name = name + location_text + loss_text + '.pt'
+    return name
+
+def save_model(model:nn.Module,path):
+    torch.save(model.state_dict(), path)
+
+def load_model(path):
+    module = torch.load(path)
+    return module
+
 
 def torch_normalized(a, axis=-1, order=2):
     # https://stackoverflow.com/a/21032099
@@ -377,7 +403,7 @@ def process_bilinear_samples(trilerp_sample_info: {}, mipmaps: []):
         condition = (level == level_idx)
         cur_uv_grid = uv_grid_list[level_idx]
 
-        cur_uv_ascending_order = cur_uv_grid[0, :, 0]
+        cur_uv_ascending_order = cur_uv_grid[0, :, 0].contiguous()
         cur_uv_descending_order = torch.flip(cur_uv_ascending_order,[0])
 
         cur_u = (uv[:, 0])[condition]
@@ -422,10 +448,10 @@ def process_bilinear_samples(trilerp_sample_info: {}, mipmaps: []):
         # we create a temporary extended mipmap for now, and we will add them back later
         extended_mipmap_cur_level = torch.zeros((6, cur_res + 2, cur_res + 2, mipmaps[level_idx].shape[-1]),dtype=p0.dtype)
 
-        extended_mipmap_cur_level.index_put((cur_face,v_location,u_location_left),p0.reshape(-1, chan_count))
-        extended_mipmap_cur_level.index_put((cur_face,v_location,u_location),p1.reshape(-1, chan_count))
-        extended_mipmap_cur_level.index_put((cur_face,v_location_bot,u_location_left),p2.reshape(-1, chan_count))
-        extended_mipmap_cur_level.index_put((cur_face,v_location_bot,u_location),p3.reshape(-1, chan_count))
+        extended_mipmap_cur_level.index_put_((cur_face,v_location,u_location_left),p0.reshape((-1,chan_count)),accumulate=True)
+        extended_mipmap_cur_level.index_put_((cur_face,v_location,u_location),p1.reshape((-1,chan_count)),accumulate=True)
+        extended_mipmap_cur_level.index_put_((cur_face,v_location_bot,u_location_left),p2.reshape((-1,chan_count)),accumulate=True)
+        extended_mipmap_cur_level.index_put_((cur_face,v_location_bot,u_location),p3.reshape((-1,chan_count)),accumulate=True)
 
 
         # now move the extended boundaries to where they belong
@@ -575,6 +601,12 @@ def bilerp_inverse(location, portion, u_right, u_left, v_up, v_bot):
 
 def push_back(mipmaps):
     """
+    Jacobian should be taken into consideration when pushing back,
+    each 2*2 tile has a Jacobian weight
+    each has a contribution of (1/8 + (1/2) * j[i] / (j[0] + j[1] + j[2] + j[3]))
+
+
+
     push all lower level values to the higher level
     :param mipmaps: a mipmap that is initialized to zero(if push back func is not called, all weight is zero)
     :return: the highest level of mipmap only, since all the values have been pushed back to this level
@@ -648,7 +680,7 @@ def push_back(mipmaps):
         For the centric 9/64 contributions in shape of 2 * 2 
         """
         cur_level_unit = cur_level_unit * 3
-        tile = np.repeat(np.repeat(cur_level_unit, 2, axis=1), 2, axis=2)
+        tile = torch.repeat_interleave(torch.repeat_interleave(cur_level_unit, 2, dim=1), 2, dim=2)
         extended_upper_level[:, 1:-1, 1:-1] += tile
 
         """
@@ -707,21 +739,25 @@ def test_optimize(ggx_alpha, res, texel_direction, n_sample_per_frame):
     print("done")
 
 
-def error_func(x, texel_direction, n_sample_per_frame, ggx_ref):
+def error_func(x, texel_direction, n_sample_per_frame, ggx_ref, constant= False):
     """
         A wrapper to compute error as scipy required
     :param x:
     :param texel_direction:
     :param n_sample_per_frame:
     :param ggx_ref:
+    :param constant: whether to use constant coeff table
     :return:
     """
-    x = x.reshape((5, 3, n_sample_per_frame * 3))
-    error = test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_ref, x)
+    if not constant:
+        x = x.reshape((5, 3, n_sample_per_frame * 3))
+    else:
+        x = x.reshape((5, n_sample_per_frame * 3))
+    error = test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_ref, x, constant)
     return error
 
 
-def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_ref, coef_table=None):
+def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_ref, coef_table=None, constant= False):
     """
     How does frame weight work on the optimization part?
     :param texel_direction: the one texel we are testing on optimization
@@ -748,7 +784,18 @@ def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_re
     all_levels = []
     all_weights = []
 
+    sample_directions = torch.empty((0,3))
+    sample_weights = torch.empty((0,))
+    sample_levels = torch.empty((0,))
+
+
     for i in range(3):
+        cur_frame_weight = frame_weight_list[i]
+
+        #if frame_weight is 0, we skip, how to do this in parallel?
+        if cur_frame_weight == 0:
+            continue
+
         X, Y, Z = torch_gen_frame_xyz(texel_direction, i)
 
         _, _, theta2, phi2 = theta_phi_list[i]
@@ -756,38 +803,54 @@ def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_re
         coeff_start = i * n_sample_per_frame
         coeff_end = coeff_start + n_sample_per_frame
 
-        coeff_x_table = coefficient_table[0, :, coeff_start:coeff_end]
-        coeff_y_table = coefficient_table[1, :, coeff_start:coeff_end]
-        coeff_z_table = coefficient_table[2, :, coeff_start:coeff_end]
-        coeff_level_table = coefficient_table[3, :, coeff_start:coeff_end]
-        coeff_weight_table = coefficient_table[4, :, coeff_start:coeff_end]
 
-        coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2
-        coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2
-        coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2
+
+        if not constant:
+            coeff_x_table = coefficient_table[0, :, coeff_start:coeff_end]
+            coeff_y_table = coefficient_table[1, :, coeff_start:coeff_end]
+            coeff_z_table = coefficient_table[2, :, coeff_start:coeff_end]
+            coeff_level_table = coefficient_table[3, :, coeff_start:coeff_end]
+            coeff_weight_table = coefficient_table[4, :, coeff_start:coeff_end]
+
+            coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2
+            coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2
+            coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2
+
+
+            level = coeff_level_table[0] + coeff_level_table[1] * theta2 + coeff_level_table[2] * phi2
+            weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2
+        else:
+            coeff_x = coefficient_table[0, coeff_start:coeff_end]
+            coeff_y = coefficient_table[1, coeff_start:coeff_end]
+            coeff_z = coefficient_table[2, coeff_start:coeff_end]
+            level = coefficient_table[3, coeff_start:coeff_end]
+            weight = coefficient_table[4, coeff_start:coeff_end]
 
         coeff_x = torch.stack((coeff_x, coeff_x, coeff_x), dim=-1)
         coeff_y = torch.stack((coeff_y, coeff_y, coeff_y), dim=-1)
         coeff_z = torch.stack((coeff_z, coeff_z, coeff_z), dim=-1)
 
-        level = coeff_level_table[0] + coeff_level_table[1] * theta2 + coeff_level_table[2] * phi2
-        weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2
 
         sample_direction = coeff_x * X + coeff_y * Y + coeff_z * Z
-        max_dir = torch.max(torch.abs(sample_direction), dim=-1).values
-        sample_direction /= torch.stack([max_dir, max_dir, max_dir], dim=-1)
+        abs_direction = torch.abs(sample_direction)
+        max_dir = torch.max(abs_direction, dim=-1).values
+        sample_direction_map = sample_direction / torch.stack([max_dir, max_dir, max_dir], dim=-1)
 
         weight_cur_frame = weight * frame_weight_list[i]
 
-        all_weights.append(weight_cur_frame)
-        all_levels.append(level)
-        all_directions.append(sample_direction)
+        #TODO: how to make weight/level always positive?
+        weight_cur_frame = torch.clip(weight_cur_frame, 0)
 
-    sample_direction = torch.concatenate((all_directions[0], all_directions[1], all_directions[2]))
-    sample_level = torch.concatenate((all_levels[0], all_levels[1], all_levels[2]))
-    sample_weight = torch.concatenate((all_weights[0], all_weights[1], all_weights[2]))
+        sample_directions = torch.concatenate((sample_directions, sample_direction_map))
+        sample_weights = torch.concatenate((sample_weights, weight_cur_frame))
+        sample_levels = torch.concatenate((sample_levels, level))
 
-    result = compute_contribution(sample_direction, sample_level, sample_weight, 7)
+        # all_weights.append(weight_cur_frame)
+        # all_levels.append(level)
+        # all_directions.append(sample_direction)
+
+
+    result = compute_contribution(sample_directions, sample_levels, sample_weights, 7)
 
     e_arr = L1_error_one_texel(ggx_ref, result)
 
@@ -797,20 +860,82 @@ def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_re
     return e
 
 
+
+
+
+class SimpleModel(nn.Module):
+    def __init__(self, n_sample_per_frame):
+        super(SimpleModel, self).__init__()
+        self.params = nn.Parameter(torch.rand((5,3,3*n_sample_per_frame)), requires_grad=True)
+
+    def forward(self):
+        return self.params
+
+
+class ConstantModel(nn.Module):
+    def __init__(self, n_sample_per_frame):
+        super(ConstantModel, self).__init__()
+        self.params = nn.Parameter(torch.concatenate(
+            (torch.rand((2, 3 * n_sample_per_frame)) / 30.0,
+             torch.ones((1,3 * n_sample_per_frame)) - 0.01,
+             (torch.rand((2, 3 * n_sample_per_frame)) + 1) / 2.0,
+             )
+        ) , requires_grad=True)
+    def forward(self):
+        return self.params
+
+def optimize_function():
+    face = 4
+    u,v = 0.8,0.2
+    location_global = map_util.uv_to_xyz((u, v), face)
+    location_global = location_global.reshape((1, -1))
+    ggx_ref = compute_ggx_distribution_reference(128,0.1,location_global)
+    location_global = torch.from_numpy(location_global)
+    ggx_ref = torch.from_numpy(ggx_ref)
+    #normalize GGX
+    ggx_ref /= torch.sum(ggx_ref)
+
+    constant = True
+    n_sample_per_frame = 8
+    if not constant:
+        model = SimpleModel(n_sample_per_frame)
+    else:
+        model = ConstantModel(n_sample_per_frame)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    n_epoch = 10000
+
+    with torch.autograd.set_detect_anomaly(True):
+        for _ in range(n_epoch):
+            optimizer.zero_grad()
+            params = model()
+            loss = error_func(params, location_global, n_sample_per_frame, ggx_ref, constant)
+            loss.backward()
+            optimizer.step()
+
+            print("it{}:loss is{}".format(_,loss.item()))
+    print("Done")
+
+
+
+
+
+
 if __name__ == "__main__":
+    optimize_function()
+
     # dummy location
 
     # test if reverse work as desired
 
-    face = 4
-    u = 0.8
-    v = 0.2
+    face = 0
+    u = 0.5
+    v = 0.5
     location_global = map_util.uv_to_xyz((u, v), face)
     location_global = location_global.reshape((1, -1))
-    u = 0.2
-    location_global2 = map_util.uv_to_xyz((u, v), face).reshape((1, -1))
-
-    location_global = np.concatenate((location_global, location_global2))
+    # u = 0.2
+    # location_global2 = map_util.uv_to_xyz((u, v), face).reshape((1, -1))
+    #
+    # location_global = np.concatenate((location_global, location_global2))
 
     # BFGS optimization test
     #test_optimize(0.01, 128, location_global[0:1, :], 8)
@@ -818,17 +943,19 @@ if __name__ == "__main__":
 
 
 
-    ggx = compute_ggx_distribution_reference(128,0.01,location_global[0:1,:])
+    #ggx = compute_ggx_distribution_reference(128,0.01,location_global[0:1,:])
     #
-    ggx = torch.from_numpy(ggx)
+    #ggx = torch.from_numpy(ggx)
     location_global = torch.from_numpy(location_global)
-    test_one_texel_full_optimization(location_global[0:1,:],8,ggx)
+    #test_one_texel_full_optimization(location_global[0:1,:],8,ggx)
     #
-    # level_global = np.array([5.4,3.2])
-    # n_level_global = 7
-    # initial_weight_global = np.array([1.0,1.0])
+    level_global = torch.tensor([6.0])
+    n_level_global = 7
+    initial_weight_global = torch.tensor([1.0])
     #
-    # t = initialize_mipmaps(n_level_global)
-    # sample_info = process_trilinear_samples(location_global, level_global, n_level_global,initial_weight_global)
-    # t = process_bilinear_samples(sample_info,t)
-    # final_image = push_back(t)
+    t = initialize_mipmaps(n_level_global)
+    sample_info = process_trilinear_samples(location_global, level_global, n_level_global,initial_weight_global)
+    t = process_bilinear_samples(sample_info,t)
+    final_image = push_back(t)
+
+    print("Done")

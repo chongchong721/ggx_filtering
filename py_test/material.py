@@ -425,3 +425,21 @@ class GGX:
                   tangentY * np.tile(normals[:,1],(3,1)).T + \
                   world_n * np.tile(normals[:,2],(3,1)).T
         return samples
+
+    def ggx_mip_level(self, samples, world_n = np.array([0.0,0.0,1.0]), res = 128):
+        """
+
+        :param samples: sample location in [N,3]
+        :param world_n: the world normal
+        :param res: resolution of mipmap
+        :return:
+        """
+        from map_util import jacobian_vertorized
+        cosine = np.dot(samples, world_n)
+        ndf = self.ndf_isotropic(cosine)
+        sa_is = np.pi * 4 / res / 4.0 / ndf
+        abs_max = np.max(np.abs(samples),axis=-1)
+        samples_map = samples / np.stack((abs_max,abs_max,abs_max),axis=-1)
+        sa_cube = 4 * jacobian_vertorized(samples_map) / (res ** 2)
+        mip_level = 0.5 * (np.log2(sa_is/sa_cube))
+        return mip_level

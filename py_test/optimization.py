@@ -531,7 +531,14 @@ def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_re
     all_levels = []
     all_weights = []
 
+    sample_directions = np.empty((0,3))
+    sample_levels = np.empty(0)
+    sample_weights = np.empty(0)
+
     for i in range(3):
+        if frame_weight_list[i] == 0.0:
+            continue
+
         X,Y,Z = gen_frame_xyz(texel_direction,i)
 
         _,_,theta2,phi2 = theta_phi_list[i]
@@ -562,17 +569,26 @@ def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_re
 
         weight_cur_frame = weight * frame_weight_list[i]
 
-        all_weights.append(weight_cur_frame)
-        all_levels.append(level)
-        all_directions.append(sample_direction)
+        #modify level by jacobian
+        # j = 3 / 4 * np.log2(map_util.dot_vectorized_2D(sample_direction, sample_direction))
+        # level += j
+
+        sample_directions = np.concatenate((sample_directions, sample_direction))
+        sample_levels = np.concatenate((sample_levels, level))
+        sample_weights = np.concatenate((sample_weights, weight))
 
 
-    sample_direction = np.concatenate((all_directions[0],all_directions[1],all_directions[2]))
-    sample_level = np.concatenate((all_levels[0],all_levels[1],all_levels[2]))
-    sample_weight = np.concatenate((all_weights[0],all_weights[1],all_weights[2]))
+        # all_weights.append(weight_cur_frame)
+        # all_levels.append(level)
+        # all_directions.append(sample_direction)
 
 
-    result = compute_contribution(sample_direction,sample_level,sample_weight,7)
+    # sample_direction = np.concatenate((all_directions[0],all_directions[1],all_directions[2]))
+    # sample_level = np.concatenate((all_levels[0],all_levels[1],all_levels[2]))
+    # sample_weight = np.concatenate((all_weights[0],all_weights[1],all_weights[2]))
+
+
+    result = compute_contribution(sample_directions,sample_levels,sample_weights,7)
 
     e_arr = L1_error_one_texel(ggx_ref,result)
 
@@ -585,9 +601,35 @@ def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_re
 
 
 
+def compare_existing_coeff_table():
+    face = 4
+    u = 0.8
+    v = 0.2
+    location_global= map_util.uv_to_xyz((u,v),face)
+    import specular
+    import coefficient
+    info = specular.cubemap_level_params(18)
+    ggx_alpha = info[0].roughness
+    ggx_ref = compute_ggx_distribution_reference(128,ggx_alpha,location_global)
+    ggx_ref /= np.sum(ggx_ref)
+    coefficient_tab_level0 = coefficient.coefficient_quad32[0]
+
+    new_table = np.zeros((coefficient_tab_level0.shape[:-1] + (coefficient_tab_level0.shape[-1]*4,)))
+
+    for i in range(coefficient_tab_level0.shape[0]):
+        for j in range(coefficient_tab_level0.shape[1]):
+            for k in range(coefficient_tab_level0.shape[-1]):
+                tmp = coefficient_tab_level0[i,j,k]
+                new_table[i,j,k*4] = tmp[0]
+                new_table[i,j,k*4+1] = tmp[1]
+                new_table[i,j,k*4+2] = tmp[2]
+                new_table[i,j,k*4+3] = tmp[3]
 
 
+    test_one_texel_full_optimization(location_global,32,ggx_ref,new_table)
 
+
+    print("done")
 
 
 
@@ -595,7 +637,7 @@ def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_re
 
 
 if __name__ == "__main__":
-
+    #compare_existing_coeff_table()
 
 
 
@@ -603,28 +645,52 @@ if __name__ == "__main__":
 
     #test if reverse work as desired
 
-    face = 4
-    u = 0.8
-    v = 0.2
+    face = 0
+    u = 0.53
+    v = 0.5
     location_global= map_util.uv_to_xyz((u,v),face)
     location_global = location_global.reshape((1,-1))
-    u = 0.2
+
+    u = 0.56
     location_global2 = map_util.uv_to_xyz((u,v),face).reshape((1,-1))
-
+    #
     location_global = np.concatenate((location_global,location_global2))
-
-    #BFGS optimization test
-    #test_optimize(0.01,128,location_global[0:1,:],8)
-
-    ggx = compute_ggx_distribution_reference(128,0.01,location_global[0:1,:])
     #
-    test_one_texel_full_optimization(location_global[0:1,:],8,ggx)
+    # #BFGS optimization test
+    # #test_optimize(0.01,128,location_global[0:1,:],8)
     #
-    # level_global = np.array([5.4,3.2])
+    # ggx = compute_ggx_distribution_reference(128,0.01,location_global[0:1,:])
+    # #
+    # test_one_texel_full_optimization(location_global[0:1,:],8,ggx)
+
+
+
+    #test 0.5,0.5
+
+
+    # level_global = np.array([5.2,5.3])
     # n_level_global = 7
     # initial_weight_global = np.array([1.0,1.0])
-    #
+    # #
     # t = initialize_mipmaps(n_level_global)
     # sample_info = process_trilinear_samples(location_global, level_global, n_level_global,initial_weight_global)
     # t = process_bilinear_samples(sample_info,t)
     # final_image = push_back(t)
+
+
+
+    face = 0
+    u = 0.5
+    v = 0.5
+    location_global = map_util.uv_to_xyz((u,v),face)
+    location_global = location_global.reshape((1,-1))
+    level_global = np.array([6.0])
+    n_level_global = 7
+    initial_weight_global = np.array([1.0])
+    #
+    t = initialize_mipmaps(n_level_global)
+    sample_info = process_trilinear_samples(location_global, level_global, n_level_global,initial_weight_global)
+    t = process_bilinear_samples(sample_info,t)
+    final_image = push_back(t)
+
+    print("Done")

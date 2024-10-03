@@ -589,7 +589,7 @@ def downsample(faces_extended,face_idx, jac_inverse = False):
         1/2 * (s[0] + s[1] + s[2] + s[3])
     ) 
     = 1/2 * (s[0] * w[0] + s[1] * w[1] + s[2] * w[2] + s[3] * w[3]) / (w[0] + w[1] + w[2] + w[3])
-     +1/2 * (s[0] + s[1] + s[2] + s[3])
+     +1/2 * (s[0] + s[1] + s[2] + s[3]) / 4
      
      This means half of the contribution comes from directly taking the average and half the contribution comes from
      the Jacobian weighted average

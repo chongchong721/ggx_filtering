@@ -39,6 +39,33 @@ def fetch_coefficient(mode:str,level_idx,parameter_idx):
 
 
 
+def expand_float4(coeff:np.ndarray):
+    dimension = coeff.ndim
+
+    n_sample_per_frame = coeff.shape[-1] * 4 / 3
+
+    new_table = np.zeros((coeff.shape[:-1] + (n_sample_per_frame * 3,)))
+
+    if dimension == 2: #constant
+        for i in range(coeff.shape[0]):
+            for j in range(coeff.shape[1]):
+                    new_table[i][4*j] = coeff[i][j][0]
+                    new_table[i][4*j+1] = coeff[i][j][1]
+                    new_table[i][4*j+2] = coeff[i][j][2]
+                    new_table[i][4*j+3] = coeff[i][j][3]
+    elif dimension == 3:
+        for i in range(coeff.shape[0]):
+            for j in range(coeff.shape[1]):
+                for k in range(coeff.shape[2]):
+                    new_table[i][j][4*k] = coeff[i][j][k][0]
+                    new_table[i][j][4*k+1] = coeff[i][j][k][1]
+                    new_table[i][j][4*k+2] = coeff[i][j][k][2]
+                    new_table[i][j][4*k+3] = coeff[i][j][k][3]
+    else:
+        raise NotImplementedError
+
+    return new_table
+
 
 
 if __name__ == "__main__":

@@ -380,7 +380,9 @@ def dot_vectorized_4D(v1, v2):
     result = np.einsum('ijkl,ijkl->ijk', v1, v2)
     return result
 
-
+def dot_vectorized_2D(v1,v2):
+    result = np.einsum('ij,ij->i', v1, v2)
+    return result
 
 
 

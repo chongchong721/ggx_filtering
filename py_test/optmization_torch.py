@@ -46,6 +46,79 @@ def load_model(path):
     return module
 
 
+def torch_jacobian_vertorized(xyz):
+    """
+
+    :param xyz: in shape (N,3) or (M,N,3)
+    :return:
+    """
+    power_2 = xyz * xyz
+    sum_xyz = torch.sum(power_2, dim=-1)
+    j = 1 / torch.pow(sum_xyz, 3/2)
+
+    return j
+
+
+def torch_uv_to_xyz_vectorized(uv:torch.Tensor ,idx, normalize_flag=False):
+    """
+
+    :param uv: array in shape of (N,2) or (M,N,2)
+    :param idx:
+    :param normalize_flag: whether we normalize the xyz vector or not
+    when computing the Jacobian, we should not normalize it
+    :return: vectorized direction in shape of (N,3)
+    """
+
+    if uv.ndim == 2:
+        u = uv[:,0]
+        v = uv[:,1]
+    elif uv.ndim == 3:
+        u = uv[:,:,0]
+        v = uv[:,:,1]
+    else:
+        raise NotImplementedError
+
+    uc = 2.0 * u - 1.0
+    vc = 2.0 * v - 1.0
+
+    if idx == 0:
+        x = torch.ones_like(uc)
+        y = vc
+        z = -uc
+    elif idx == 1:
+        x = -torch.ones_like(uc)
+        y = vc
+        z = uc
+    elif idx == 2:
+        x = uc
+        y = torch.ones_like(uc)
+        z = -vc
+    elif idx == 3:
+        x = uc
+        y = -torch.ones_like(uc)
+        z = vc
+    elif idx == 4:
+        x = uc
+        y = vc
+        z = torch.ones_like(uc)
+    elif idx == 5:
+        x = -uc
+        y = vc
+        z = -torch.ones_like(uc)
+    else:
+        raise NotImplementedError
+
+
+    vec = torch.stack((x, y, z), dim=-1)
+    if normalize_flag:
+        vec = torch_normalized(vec)
+
+    return vec
+
+
+
+
+
 def torch_normalized(a, axis=-1, order=2):
     # https://stackoverflow.com/a/21032099
     norm = torch.linalg.norm(a, ord=order, dim = axis)
@@ -599,6 +672,51 @@ def bilerp_inverse(location, portion, u_right, u_left, v_up, v_bot):
     return u0_portion, u1_portion, u2_portion, u3_portion
 
 
+
+def downsample_xyz_pattern_full(face_extended_res):
+
+    xyz = torch.zeros((6, face_extended_res - 2, face_extended_res - 2, 3))
+
+    for face_idx in range(6):
+        uv = create_downsample_pattern(face_extended_res)
+        xyz[face_idx] = torch_uv_to_xyz_vectorized(uv, face_idx)
+
+    return xyz
+
+
+
+
+def create_downsample_pattern(face_extended_res):
+    """
+    create the downsample pattern (the 1/4 3/4 location for bilerp), this is useful in computing Jacobian
+    because every bilerp location is within the face, so we do not need the extended rows/cols
+    :param extended_res:
+    :return: return the uv index
+    """
+    #point pattern 1, start from 1.25 -> 3.25 -> 5.25 -> res - 2.75
+    point_idx_pattern1 = torch.arange(5/4 ,face_extended_res - 3/4, 2)
+    #point pattern 2, start from 2.75 -> 4.75 -> res - 1.25
+    point_idx_pattern2 = torch.arange(2+3/4,face_extended_res - 1 - 1/4 + 2, 2)
+
+    point_idx_pattern1 -= 1
+    point_idx_pattern2 -= 1
+
+    point_idx = torch.stack(( point_idx_pattern1, point_idx_pattern2), dim=1).reshape(-1)
+
+    #point ys is u    point xs is v
+    point_xs,point_ys = torch.meshgrid(torch.flip(point_idx, dims=[0]),point_idx,indexing='ij')
+
+    uv = torch.stack((point_ys, point_xs), dim=-1)
+
+    uv /= (face_extended_res - 2)
+
+    return uv
+
+
+
+
+
+
 def push_back(mipmaps):
     """
     Jacobian should be taken into consideration when pushing back,
@@ -619,6 +737,14 @@ def push_back(mipmaps):
         res = level_to_res(level_idx, 7)
         extended_upper_res = res * 2 + 2
         extended_upper_level = torch.zeros((6, extended_upper_res, extended_upper_res, cur_level.shape[-1]))
+
+
+        """
+        xyz_bilerp_upper has a resolution of 2res * 2res, the neighboring 4 are the jacobian used for the bilerp samples
+        """
+        xyz_bilerp_upper = downsample_xyz_pattern_full(extended_upper_res)
+        j = torch_jacobian_vertorized(xyz_bilerp_upper)
+        j_sum = j.view(6,res,2,res,2).sum(dim=(2,4))
 
         # instead of looping through each element, we'd better loop through each kernel item
         """
@@ -921,7 +1047,10 @@ def optimize_function():
 
 
 if __name__ == "__main__":
-    optimize_function()
+    #t = create_downsample_pattern(130)
+    #t = torch_uv_to_xyz_vectorized(t,0)
+
+    #optimize_function()
 
     # dummy location
 
@@ -959,3 +1088,5 @@ if __name__ == "__main__":
     final_image = push_back(t)
 
     print("Done")
+
+

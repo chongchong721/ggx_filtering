@@ -345,6 +345,47 @@ def bilerp_inverse(location, portion ,u_right,u_left,v_up,v_bot):
 
 
 
+def downsample_xyz_pattern_full(face_extended_res):
+
+    xyz = np.zeros((6, face_extended_res - 2, face_extended_res - 2, 3))
+
+    for face_idx in range(6):
+        uv = create_downsample_pattern(face_extended_res)
+        xyz[face_idx] = map_util.uv_to_xyz_vectorized(uv, face_idx)
+
+    return xyz
+
+
+
+
+def create_downsample_pattern(face_extended_res):
+    """
+    create the downsample pattern (the 1/4 3/4 location for bilerp), this is useful in computing Jacobian
+    because every bilerp location is within the face, so we do not need the extended rows/cols
+    :param extended_res:
+    :return: return the uv index
+    """
+    #point pattern 1, start from 1.25 -> 3.25 -> 5.25 -> res - 2.75
+    point_idx_pattern1 = np.arange(5/4 ,face_extended_res - 3/4, 2)
+    #point pattern 2, start from 2.75 -> 4.75 -> res - 1.25
+    point_idx_pattern2 = np.arange(2+3/4,face_extended_res - 1 - 1/4 + 2, 2)
+
+    point_idx_pattern1 -= 1
+    point_idx_pattern2 -= 1
+
+    point_idx = np.stack(( point_idx_pattern1, point_idx_pattern2),axis=1).reshape(-1)
+
+    #point ys is u    point xs is v
+    point_xs,point_ys = np.meshgrid(np.flip(point_idx),point_idx,indexing='ij')
+
+    uv = np.stack((point_ys, point_xs),axis=-1)
+
+    uv /= (face_extended_res - 2)
+
+    return uv
+
+
+
 def push_back(mipmaps):
     """
     push all lower level values to the higher level
@@ -359,6 +400,30 @@ def push_back(mipmaps):
         res = level_to_res(level_idx,7)
         extended_upper_res = res * 2 + 2
         extended_upper_level = np.zeros((6,extended_upper_res,extended_upper_res,cur_level.shape[-1]))
+
+        xyz_bilerp_upper = downsample_xyz_pattern_full(extended_upper_res)
+        j = map_util.jacobian_vertorized(xyz_bilerp_upper)
+        j_sum = j.reshape(6, res, 2, res, 2).sum(axis=(2,4))
+
+        j_pattern_upper_left = j[:, 0::2, 0::2]
+        j_pattern_upper_right = j[:, 0::2, 1::2]
+        j_pattern_bot_left = j[:, 1::2, 0::2]
+        j_pattern_bot_right = j[:, 1::2, 1::2]
+
+        j_selection = np.zeros((2, 2) + j_pattern_upper_left.shape)
+        j_selection[0, 0] = j_pattern_upper_left
+        j_selection[0, 1] = j_pattern_upper_right
+        j_selection[1, 0] = j_pattern_bot_left
+        j_selection[1, 1] = j_pattern_bot_right
+
+        # since we are doing 1 element of each sample(and repeat 16 times), each element has the same jacobian location,
+        # we can vectorize this, and we can precaculate the result
+
+        cur_level_unit_selection = np.zeros(j_selection.shape + (1,))
+        cur_level_unit_selection[0, 0] = np.expand_dims(cur_level * (1 / 128.0 + 1 / 32.0 * j_pattern_upper_left / j_sum),axis=-1)
+        cur_level_unit_selection[0, 1] = np.expand_dims(cur_level * (1 / 128.0 + 1 / 32.0 * j_pattern_upper_right / j_sum),axis=-1)
+        cur_level_unit_selection[1, 0] = np.expand_dims(cur_level * (1 / 128.0 + 1 / 32.0 * j_pattern_bot_left / j_sum),axis=-1)
+        cur_level_unit_selection[1, 1] = np.expand_dims(cur_level * (1 / 128.0 + 1 / 32.0 * j_pattern_bot_right / j_sum),axis=-1)
 
 
         #instead of looping through each element, we'd better loop through each kernel item
@@ -385,7 +450,6 @@ def push_back(mipmaps):
 
         start_idx = [0,3]
 
-        cur_level_unit = cur_level / 64.0
 
         for row_start in start_idx:
             # Note that, the row_end here needs to be included(while python slice exclude row end
@@ -393,13 +457,12 @@ def push_back(mipmaps):
             row_end = row_start + 2 * (res -1) + 2
             for col_start in start_idx:
                 col_end = col_start + 2 * (res - 1) + 2
-                extended_upper_level[:,row_start:row_end:2,col_start:col_end:2] += cur_level_unit
+                extended_upper_level[:,row_start:row_end:2,col_start:col_end:2] += cur_level_unit_selection[row_start/2,col_start/2]
 
 
         """
         For the four 3/64 contributions at left and right side
         """
-        cur_level_unit = cur_level_unit * 3
 
         start_idx_row = [1,2]
         start_idx_col = [0,3]
@@ -407,7 +470,7 @@ def push_back(mipmaps):
             row_end = row_start + 2 * (res - 1) + 2
             for col_start in start_idx_col:
                 col_end = col_start + 2 * (res - 1) + 2
-                extended_upper_level[:,row_start:row_end:2, col_start:col_end:2] += cur_level_unit
+                extended_upper_level[:,row_start:row_end:2, col_start:col_end:2] += cur_level_unit_selection[row_start/2,col_start/2]
 
         """
         For the four 3/64 contributions at up and bot side
@@ -417,14 +480,16 @@ def push_back(mipmaps):
             row_end = row_start + 2 * (res - 1) + 2
             for col_start in start_idx_col:
                 col_end = col_start + 2 * (res - 1) + 2
-                extended_upper_level[:,row_start:row_end:2, col_start:col_end:2] += cur_level_unit
+                extended_upper_level[:,row_start:row_end:2, col_start:col_end:2] += cur_level_unit_selection[row_start/2,col_start/2]
 
         """
         For the centric 9/64 contributions in shape of 2 * 2 
         """
-        cur_level_unit = cur_level_unit * 3
-        tile = np.repeat(np.repeat(cur_level_unit,2,axis=1),2,axis=2)
-        extended_upper_level[:,1:-1,1:-1] += tile
+
+        j_sum_ext = np.repeat(np.repeat(j_sum,2,axis=1),2,axis=2)
+        tile = np.repeat(np.repeat(cur_level,2,axis=1),2,axis=2)
+        cur_level_unit = np.expand_dims(9 * tile * (1 / 128.0 + 1 / 32.0 * j / j_sum_ext),axis=-1)
+        extended_upper_level[:,1:-1,1:-1] += cur_level_unit
 
 
         """

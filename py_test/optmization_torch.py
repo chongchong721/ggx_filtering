@@ -723,6 +723,18 @@ def push_back(mipmaps):
     each 2*2 tile has a Jacobian weight
     each has a contribution of (1/8 + (1/2) * j[i] / (j[0] + j[1] + j[2] + j[3]))
 
+    for 1/64 texel,
+    the final contribution is (1/128) + 1/32 * (j[i]/ (j[0] + j[1] + j[2] + j[3]))
+
+
+    for start_idx, it ranges from 0,3, whic covers all 4*4 texels
+    [0:2,0:2] will use upper-left jacobian
+    [0:2,2:4] will use upper-right jacobian
+    [2:4,0:2] will use lower-left jacobian
+    [2:4,2:4] will use lower-right jacobian
+
+    TODO:do the above, current method is wrong
+
 
 
     push all lower level values to the higher level
@@ -745,6 +757,26 @@ def push_back(mipmaps):
         xyz_bilerp_upper = downsample_xyz_pattern_full(extended_upper_res)
         j = torch_jacobian_vertorized(xyz_bilerp_upper)
         j_sum = j.view(6,res,2,res,2).sum(dim=(2,4))
+
+        j_pattern_upper_left = j[:,0::2,0::2]
+        j_pattern_upper_right = j[:,0::2,1::2]
+        j_pattern_bot_left = j[:,1::2,0::2]
+        j_pattern_bot_right = j[:,1::2,1::2]
+
+        j_selection = torch.zeros((2,2) + j_pattern_upper_left.shape)
+        j_selection[0,0] = j_pattern_upper_left
+        j_selection[0,1] = j_pattern_upper_right
+        j_selection[1,0] = j_pattern_bot_left
+        j_selection[1,1] = j_pattern_bot_right
+
+        # since we are doing 1 element of each sample(and repeat 16 times), each element has the same jacobian location,
+        # we can vectorize this, and we can precaculate the result
+
+        cur_level_unit_selection = np.zeros(j_selection.shape + (1,))
+        cur_level_unit_selection[0,0] = cur_level * (1 / 128.0 + 1 / 32.0 * j_pattern_upper_left / j_sum).unsqueeze(-1)
+        cur_level_unit_selection[0,1] = cur_level * (1 / 128.0 + 1 / 32.0 * j_pattern_upper_right / j_sum).unsqueeze(-1)
+        cur_level_unit_selection[1,0] = cur_level * (1 / 128.0 + 1 / 32.0 * j_pattern_bot_left / j_sum).unsqueeze(-1)
+        cur_level_unit_selection[1,1] = cur_level * (1 / 128.0 + 1 / 32.0 * j_pattern_bot_right / j_sum).unsqueeze(-1)
 
         # instead of looping through each element, we'd better loop through each kernel item
         """
@@ -772,42 +804,73 @@ def push_back(mipmaps):
         cur_level_unit = cur_level / 64.0
 
         for row_start in start_idx:
+            """
+            0,0 is upper-left(J[0,0])
+            0,3 is upper-right(J[0,1])
+            3,0 is bottom-left(J[1,0])
+            3,3 is bottom-right(J[1,1])
+            """
+
             # Note that, the row_end here needs to be included(while python slice exclude row end
             # row_end = row_start + 2 * (extended_upper_res - 1)
             row_end = row_start + 2 * (res - 1) + 2
             for col_start in start_idx:
                 col_end = col_start + 2 * (res - 1) + 2
-                extended_upper_level[:, row_start:row_end:2, col_start:col_end:2] += cur_level_unit
+                #current_j = j[row_start%2,col_start%2]
+                #extended_upper_level[:, row_start:row_end:2, col_start:col_end:2] += cur_level * (1 / 128.0 + 1 / 32.0 * current_j / j_sum).unsqueeze(-1)
+                extended_upper_level[:, row_start:row_end:2, col_start:col_end:2] += cur_level_unit_selection[int(row_start/2),int(col_start/2)]
 
         """
         For the four 3/64 contributions at left and right side
         """
-        cur_level_unit = cur_level_unit * 3
+        #cur_level_unit = cur_level_unit * 3
 
         start_idx_row = [1, 2]
         start_idx_col = [0, 3]
+
+        """
+        1,0 is top-left(J[0,0]
+        1,3 is top-right(J[0,1])
+        2,0 is bot-left(J[1,0])
+        2,3 is bot-right(J[1,1])
+        """
+
         for row_start in start_idx_row:
             row_end = row_start + 2 * (res - 1) + 2
             for col_start in start_idx_col:
                 col_end = col_start + 2 * (res - 1) + 2
-                extended_upper_level[:, row_start:row_end:2, col_start:col_end:2] += cur_level_unit
+                current_j = j[row_start%2,col_start%2]
+                #extended_upper_level[:, row_start:row_end:2, col_start:col_end:2] += cur_level_unit
+                extended_upper_level[:, row_start:row_end:2, col_start:col_end:2] += cur_level_unit_selection[int(row_start/2),int(col_start/2)] * 3
 
         """
         For the four 3/64 contributions at up and bot side
         """
+
+        """
+        0,1 is upper-left
+        0,2 is upper-right
+        3,1 is bot-left
+        3,2 is bot-right
+        """
+
         start_idx_row, start_idx_col = start_idx_col, start_idx_row
         for row_start in start_idx_row:
             row_end = row_start + 2 * (res - 1) + 2
             for col_start in start_idx_col:
                 col_end = col_start + 2 * (res - 1) + 2
-                extended_upper_level[:, row_start:row_end:2, col_start:col_end:2] += cur_level_unit
+                #current_j = j[row_start%2,col_start%2]
+                extended_upper_level[:, row_start:row_end:2, col_start:col_end:2] += cur_level_unit_selection[int(row_start/2),int(col_start/2)] * 3
 
         """
         For the centric 9/64 contributions in shape of 2 * 2 
         """
-        cur_level_unit = cur_level_unit * 3
-        tile = torch.repeat_interleave(torch.repeat_interleave(cur_level_unit, 2, dim=1), 2, dim=2)
-        extended_upper_level[:, 1:-1, 1:-1] += tile
+        #cur_level_unit = cur_level_unit * 3
+
+        j_sum_ext = torch.repeat_interleave(torch.repeat_interleave(j_sum, 2, dim=1), 2, dim=2)
+        tile = torch.repeat_interleave(torch.repeat_interleave(cur_level, 2, dim=1), 2, dim=2)
+        cur_level_unit = 9 * tile * (1 / 128.0 + 1 / 32.0 * j / j_sum_ext).unsqueeze(-1)
+        extended_upper_level[:, 1:-1, 1:-1] += cur_level_unit
 
         """
         Add the pushed result to the level
@@ -1044,9 +1107,60 @@ def optimize_function():
 
 
 
+def verify_push_back():
+    face = 0
+    u = 0.25
+    v = 0.75
+    location_global = map_util.uv_to_xyz((u, v), face)
+    location_global = location_global.reshape((1, -1))
+    # u = 0.2
+    # location_global2 = map_util.uv_to_xyz((u, v), face).reshape((1, -1))
+    #
+    # location_global = np.concatenate((location_global, location_global2))
+
+    # BFGS optimization test
+    # test_optimize(0.01, 128, location_global[0:1, :], 8)
+
+    # ggx = compute_ggx_distribution_reference(128,0.01,location_global[0:1,:])
+    #
+    # ggx = torch.from_numpy(ggx)
+    location_global = torch.from_numpy(location_global)
+    # test_one_texel_full_optimization(location_global[0:1,:],8,ggx)
+    #
+    level_global = torch.tensor([6.0])
+    n_level_global = 7
+    initial_weight_global = torch.tensor([1.0])
+    #
+    t = initialize_mipmaps(n_level_global)
+    sample_info = process_trilinear_samples(location_global, level_global, n_level_global, initial_weight_global)
+    t = process_bilinear_samples(sample_info, t)
+    final_image = push_back(t)
+
+    #create a random 6,128,128 image
+
+    rng = np.random.default_rng(12345)
+
+    random_img = rng.random((6,128,128,1)) * 1000
+    from interpolation import downsample_full
+    downsample_full = downsample_full(random_img,7)
+    final_image_np = final_image.detach().numpy()
+
+    result_t = np.sum(final_image_np * random_img)
+
+    result_1 = downsample_full[-1][0,0,0,0]
+
+
+
+    print("?")
+
+
+
+
 
 
 if __name__ == "__main__":
+    verify_push_back()
+
     #t = create_downsample_pattern(130)
     #t = torch_uv_to_xyz_vectorized(t,0)
 

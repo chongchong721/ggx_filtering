@@ -88,6 +88,8 @@ float Nz = adir[axis];
 - GGX Kernel?
 - $\int L(l)D(h)dl$ -> $\int L(x)B(x)dx$?
 
+- Axis difference?
+
 
 ### Split sum assumption
 $n=v=l$
@@ -102,3 +104,37 @@ compare pixel value curve?
 
 ### synthetic cubemap to test?
 $sin$?
+
+
+
+
+
+
+
+
+
+
+### Optimization
+For every texel, assume we follow $l=h=v$, we will have an integral of
+$\int l(h)D(h)dh = \sum_i^N c_i l_e(x)$ and $l_e(x) = \int l(h)D(h)dh$ 
+- Remove l(h), we have $\int D(h)dh = \int \sum_i^N c_i D(h)dh  $ and we project this to cube map
+- So we want to optimize $ \int|B(x) - \sum_i^N c_i b_i(x)|dx $ to $0$
+ - $B(x)$ is simply the NDF of a GGX material
+ - 
+
+
+Stocastic gradient decent first on one texel to check the target function
+
+impossible to converge if start randomly?(sgd,bfgs,adam) even for simpler constant case
+take Jacobian into consideration or not e.g. when pushing back?(currently no)
+importance sampling as initial guess? how to convert it to parameters?
+
+use ref table and compare, still high error?
+
+
+
+
+
+
+
+

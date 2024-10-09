@@ -134,7 +134,39 @@ use ref table and compare, still high error?
 
 
 
+- roughness:
+  - 0.00276213059566896
+  - 0.007812380793438864
+  - 0.02209439000758283
+  - 0.062439054105446264
+  - 0.17541160386140583
+  - 0.4714045207910317
+  - 1.0
+- 16 roughess
+  - 0.005524187436252161
+  - 0.013918943967766476
+  - 0.03505537971597294
+  - 0.08804509063256238
+  - 0.21739779351032737
+  - 0.48942038369528706
+  - 0.816496580927726
 
 
+
+
+- one pushback preparation took 0.0014 seconds to execute.
+- one pushing back took 0.0442 seconds to execute.
+- computing error took 2.1592 seconds to execute.
+- Back propagation took 3.3398 seconds to execute.
+- one pushback preparation took 0.0009 seconds to execute.
+- one pushing back took 0.0500 seconds to execute.
+- computing error took 2.0790 seconds to execute.
+- Back propagation took 4.2514 seconds to execute.
+- one pushback preparation took 0.0009 seconds to execute.
+- one pushing back took 0.0749 seconds to execute.
+- computing error took 2.1064 seconds to execute.
+- Back propagation took 4.3171 seconds to execute.
+- one pushback preparation took 0.0012 seconds to execute.
+- one pushing back took 0.0949 seconds to execute.
 
 

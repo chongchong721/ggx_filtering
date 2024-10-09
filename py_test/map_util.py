@@ -420,3 +420,33 @@ def random_dir_cube(uv = None, n_dir = 1):
     xyz = random_dir_sphere(uv,n_dir)
     xyz_cube = dir_to_cube_coordinate(xyz)
     return xyz_cube
+
+
+
+def sample_location(n_sample_per_level, rng = None):
+    """
+    Generate directions for optimization
+    Since we can not afford computing error for all direction, we need to sample a few texel directions
+    :param n_sample_per_level:
+    :param rng:
+    :return:
+    """
+    if rng is None:
+        rng = np.random.default_rng(int(datetime.now().timestamp()))
+    uv = rng.random((n_sample_per_level, 2))
+    xyz = random_dir_cube(uv, n_sample_per_level)
+    return xyz
+
+
+
+def is_level(ggx_alpha,texel_direction):
+    pass
+
+
+
+
+if __name__ == "__main__":
+    face = 4
+    u,v = 0.8,0.2
+    location_global = uv_to_xyz((u, v), face)
+    print(location_global)

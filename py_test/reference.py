@@ -84,7 +84,7 @@ def outer_loop(normalized_xyz_output,normalized_xyz_input,j_weighted_input,alpha
 
 
 
-def compute_reference(input_map, cubemap_res, ref_res, GGX_alpha, save_file_name):
+def compute_reference(input_map, cubemap_res, ref_res, GGX_alpha, save_file_name = None):
     """
     lower res means rougher GGX
     :param input_map:
@@ -136,7 +136,10 @@ def compute_reference(input_map, cubemap_res, ref_res, GGX_alpha, save_file_name
                     pbar.update(1)
 
     #file_name = "res" + str(ref_res) + "alpha" + str(GGX_alpha) + ".npy"
-    np.save("./refs/" + save_file_name,int_result)
+    if save_file_name is not None:
+        np.save("./refs/" + save_file_name,int_result)
+
+    return int_result
 
 
 
@@ -151,17 +154,30 @@ def compute_ggx_distribution_reference(res,ggx_alpha,normal_direction):
     """
     ggx = material.GGX(ggx_alpha,ggx_alpha)
     assert normal_direction.size == 3
-    normal_direction /= np.linalg.norm(normal_direction)
+    normal_direction_normalized = normal_direction / np.linalg.norm(normal_direction)
     directions = texel_directions(res)
     directions = mat_util.normalized(directions,axis=-1)
 
-    cosine = np.dot(directions,normal_direction.flatten())
+    cosine = np.dot(directions,normal_direction_normalized.flatten())
     ndf = ggx.ndf_isotropic(cosine)
 
     return ndf.reshape(ndf.shape+(1,))
 
 
+
+def generate_custom_reference(file_name, high_res, ggx_alpha, ref_res):
+    env_map = image_read.envmap_to_cubemap('./exr_files/'+file_name,high_res)
+    save_name = "custom_" + file_name[6:-4] + "_" + str(ref_res) + "_" + "{:.3f}".format(ggx_alpha)
+    save_name_np = save_name + ".npy"
+    save_name_hdr = save_name + ".hdr"
+    array_ref = compute_reference(env_map, high_res, ref_res,ggx_alpha, save_name_np)
+    image_read.gen_cubemap_preview_image(array_ref,ref_res,filename = "./refs/" + save_name_hdr)
+
+
 if __name__ == '__main__':
+
+    generate_custom_reference("08-21_Swiss_A.hdr",128,0.1,16)
+
     #test(128)
 
     file_list = ["08-21_Swiss_A.hdr","08-08_Sunset_D.hdr","04-29_Night_B.hdr","04-07_Fila_lnter.hdr"]

@@ -169,4 +169,15 @@ use ref table and compare, still high error?
 - one pushback preparation took 0.0012 seconds to execute.
 - one pushing back took 0.0949 seconds to execute.
 
+initialization?
+
+too slow
+
+jacobian level?
+
+shift in filtered image
+
+one texel optimization:
+  face 4 u=0.8 v=0.2
+  adjust level -> higher value?
 

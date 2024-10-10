@@ -769,7 +769,7 @@ class trilinear_mipmap_interpolator:
     def interpolate_all(self,xyz,level):
         """
 
-        :param xyz: in shape of [N,3]
+        :param xyz: in shape of [N,3], xyz must be on the cubemap
         :param level: in the shape of (xyz.shape[:-1]), incicating the mipmap level
         :return:
         """

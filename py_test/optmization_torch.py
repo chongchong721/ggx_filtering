@@ -839,8 +839,8 @@ if __name__ == "__main__":
 
     #t = create_downsample_pattern(130)
     #t = torch_uv_to_xyz_vectorized(t,0)
-    optimize_multiple_locations(50,False,8, ggx_alpha)
-    #optimize_function()
+    #optimize_multiple_locations(50,False,8, ggx_alpha)
+    optimize_function()
 
     # dummy location
 

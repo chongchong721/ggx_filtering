@@ -232,7 +232,7 @@ def fetch_samples_python_table(tex_input,output_level, coeff_table, n_sample_per
                 sample_level += j
 
 
-            color_tmp = interpolator.interpolate_all(sample_direction, sample_level)
+            color_tmp = interpolator.interpolate_all(sample_direction_map, sample_level)
 
             color += color_tmp * np.stack((sample_weight, sample_weight, sample_weight), axis=-1)
             weight += sample_weight
@@ -383,9 +383,15 @@ def test_coef(constant:bool,ggx_alpha,n_sample_per_frame,n_multi_loc = None, adj
 
     ref = reference.compute_reference(mipmap_l0,high_res,16,ggx_alpha)
 
-    result = fetch_samples_python_table(mipmaps,3,table,8,constant=constant, j_adjust=adjust_level)
+    result = fetch_samples_python_table(mipmaps,3,table,8,constant=constant, j_adjust=False)
 
-    image_read.gen_cubemap_preview_image(result,16,filename="filter_ggx0.1_16.exr")
+    result_level_adjust = fetch_samples_python_table(mipmaps,3,table,8,constant=constant, j_adjust=True)
+
+    diff_level_adjust = ref - result
+    diff = ref -result_level_adjust
+
+
+    #image_read.gen_cubemap_preview_image(result,16,filename="filter_ggx0.1_16.exr")
 
     face = 4
     u,v = 0.8,0.2
@@ -393,15 +399,25 @@ def test_coef(constant:bool,ggx_alpha,n_sample_per_frame,n_multi_loc = None, adj
     print(location_global)
 
 
+def test_ref_coef_const():
+    mipmap_l0 = image_read.envmap_to_cubemap('exr_files/08-21_Swiss_A.hdr', high_res)
+    mipmaps = interpolation.downsample_full(mipmap_l0, n_mipmap_level)
 
+    table = coefficient.expand_float4(coefficient.coefficient_const8)
+    output_level = 3
 
+    result = fetch_samples_python_table(mipmaps,3,table[output_level],8,constant=True, j_adjust=False)
+    image_read.gen_cubemap_preview_image(result,16,filename="filter_ggx_level3_const_codetable.exr")
 
 if __name__ == '__main__':
     n_mipmap_level = 7
     high_res = 2**n_mipmap_level
 
-    level_jacobian = False
-    test_coef(True,0.1,8, 8, level_jacobian)
+    level_jacobian = True
+
+    #test_ref_coef_const()
+
+    test_coef(True,0.1,8, None, level_jacobian)
 
     j_inverse = False
     code_follow = False

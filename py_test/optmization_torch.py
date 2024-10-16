@@ -129,9 +129,9 @@ def test_multiple_texel_full_optimization(texel_dirs,n_sample_per_frame, n_sampl
 
 
         #texel_direction = texel_dirs[dir_idx,:]
-        sample_directions = torch.empty((0, 3)).to(device)
-        sample_weights = torch.empty((0,)).to(device)
-        sample_levels = torch.empty((0,)).to(device)
+        sample_directions = torch.empty((0, 3),device=device)
+        sample_weights = torch.empty((0,),device=device)
+        sample_levels = torch.empty((0,),device=device)
         for i in range(3):
             X, Y, Z = xyz_list[i][0][dir_idx],xyz_list[i][1][dir_idx],xyz_list[i][2][dir_idx]
             theta2, phi2 = theta_phi_list[i][2][dir_idx],theta_phi_list[i][3][dir_idx]
@@ -214,8 +214,17 @@ def test_multiple_texel_full_optimization(texel_dirs,n_sample_per_frame, n_sampl
 
 
 
+def process_input(dir_idx, stream ,results, sample_directions, sample_levels, sample_weights, ggx_ref):
+    with torch.cuda.stream(stream):
+        result = torch_util.compute_contribution(sample_directions, sample_levels, sample_weights, 7)
+        e_arr = L1_error_one_texel(ggx_ref, result)
+        e = torch.sum(e_arr)
+        # e = np.average(e_arr)
+        results[dir_idx] = e
 
-def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_ref, coef_table=None, constant= False):
+
+
+def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_ref, coef_table=None, constant= False, adjust_level = False, device = torch.device('cpu')):
     """
     How does frame weight work on the optimization part?
     :param texel_direction: the one texel we are testing on optimization
@@ -238,9 +247,9 @@ def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_re
         frame_weight_list.append(torch_util.torch_gen_frame_weight(unnormalized_texel_direction, i))
         theta_phi_list.append(torch_util.torch_gen_theta_phi(unnormalized_texel_direction, i))
 
-    sample_directions = torch.empty((0,3))
-    sample_weights = torch.empty((0,))
-    sample_levels = torch.empty((0,))
+    sample_directions = torch.empty((0,3), device=device)
+    sample_weights = torch.empty((0,), device=device)
+    sample_levels = torch.empty((0,), device=device)
 
 
     for i in range(3):
@@ -300,6 +309,9 @@ def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_re
         sample_weights = torch.concatenate((sample_weights, weight_cur_frame))
 
         #TODO: Jacobian?
+        if adjust_level:
+            j = 3 / 4 * torch.log2(torch_util.torch_dot_vectorized_2D(sample_direction_map, sample_direction_map))
+            level += j
 
         sample_levels = torch.concatenate((sample_levels, level))
 
@@ -363,7 +375,7 @@ def precompute_opt_info(texel_directions, n_sample_per_level):
     return weight_per_frame, xyz_per_frame, theta_phi_per_frame
 
 
-def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False):
+def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False, cuda_stream = False):
     """
     To speed up, a lot of things can be precomputed, including the relative XYZ,the frame weight
     we don't have to compute this in every iteration
@@ -435,16 +447,19 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
         # start_time = time.time()
 
-        error_list,result_list = test_multiple_texel_full_optimization(all_locations,n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame, coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
+        if not cuda_stream:
+            error_list,result_list = test_multiple_texel_full_optimization(all_locations,n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame, coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
 
-        # end_time = time.time()
-        # elapsed_time = end_time - start_time
-        # print(f"computing error took {elapsed_time:.4f} seconds to execute.")
+            # end_time = time.time()
+            # elapsed_time = end_time - start_time
+            # print(f"computing error took {elapsed_time:.4f} seconds to execute.")
 
-        # start_time = time.time()
+            # start_time = time.time()
 
-        tmp = torch.stack(error_list)
-        mean_error = tmp.mean()
+            tmp = torch.stack(error_list)
+            mean_error = tmp.mean()
+        else:
+            mean_error = test_multiple_texel_opt_cuda_stream(n_sample_per_frame,n_sample_per_level,weight_per_frame,xyz_per_frame,theta_phi_per_frame, coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
         mean_error.backward()
         optimizer.step()
 
@@ -700,7 +715,103 @@ def chunk_list(lst, chunk_size):
     return [lst[i:i + chunk_size] for i in range(0, len(lst), chunk_size)]
 
 
-def multiple_texel_full_optimization_parallel(n_sample_per_frame, n_sample_per_level ,constant= False, n_process = 8, ggx_alpha = 0.1):
+def test_multiple_texel_opt_cuda_stream(n_sample_per_frame, n_sample_per_level ,ggx_ref_list, weight_list, xyz_list, theta_phi_list ,coef_table=None, constant= False, adjust_level = False, device = torch.device('cpu')):
+    """
+
+    :param n_sample_per_frame:
+    :param n_sample_per_level:
+    :param ggx_ref_list:
+    :param weight_list:
+    :param xyz_list:
+    :param theta_phi_list:
+    :param coef_table:
+    :param constant:
+    :param adjust_level:
+    :param device:
+    :return:
+    """
+    streams = [torch.cuda.Stream(device=torch.device("cuda")) for _ in range(n_sample_per_level)]
+    results = [None] * 50
+    if coef_table is None:
+        # a single coefficient table in shape [5,3,nsample_per_frame * 3]
+
+        coefficient_table = torch.rand((5, 3, n_sample_per_frame * 3))
+    else:
+        coefficient_table = coef_table
+
+    for dir_idx in range(n_sample_per_level):
+        sample_directions = torch.empty((0, 3), device=device)
+        sample_weights = torch.empty((0,), device=device)
+        sample_levels = torch.empty((0,), device=device)
+        for i in range(3):
+            X, Y, Z = xyz_list[i][0][dir_idx], xyz_list[i][1][dir_idx], xyz_list[i][2][dir_idx]
+            theta2, phi2 = theta_phi_list[i][2][dir_idx], theta_phi_list[i][3][dir_idx]
+            frame_weight = weight_list[i][dir_idx]
+
+            if frame_weight == 0:
+                continue
+
+            coeff_start = i * n_sample_per_frame
+            coeff_end = coeff_start + n_sample_per_frame
+            if not constant:
+                coeff_x_table = coefficient_table[0, :, coeff_start:coeff_end]
+                coeff_y_table = coefficient_table[1, :, coeff_start:coeff_end]
+                coeff_z_table = coefficient_table[2, :, coeff_start:coeff_end]
+                coeff_level_table = coefficient_table[3, :, coeff_start:coeff_end]
+                coeff_weight_table = coefficient_table[4, :, coeff_start:coeff_end]
+
+                coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2
+                coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2
+                coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2
+
+                level = coeff_level_table[0] + coeff_level_table[1] * theta2 + coeff_level_table[2] * phi2
+                weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2
+            else:
+                coeff_x = coefficient_table[0, coeff_start:coeff_end]
+                coeff_y = coefficient_table[1, coeff_start:coeff_end]
+                coeff_z = coefficient_table[2, coeff_start:coeff_end]
+                level = coefficient_table[3, coeff_start:coeff_end]
+                weight = coefficient_table[4, coeff_start:coeff_end]
+
+            coeff_x = torch.stack((coeff_x, coeff_x, coeff_x), dim=-1)
+            coeff_y = torch.stack((coeff_y, coeff_y, coeff_y), dim=-1)
+            coeff_z = torch.stack((coeff_z, coeff_z, coeff_z), dim=-1)
+
+            sample_direction = coeff_x * X + coeff_y * Y + coeff_z * Z
+            abs_direction = torch.abs(sample_direction)
+            max_dir = torch.max(abs_direction, dim=-1).values
+            sample_direction_map = sample_direction / torch.stack([max_dir, max_dir, max_dir], dim=-1)
+
+            weight_cur_frame = weight * frame_weight
+
+            # TODO: how to make weight/level always positive?
+            weight_cur_frame = torch.clip(weight_cur_frame, 0)
+            level = torch.clip(level, 0.0, 6.0)
+
+            sample_directions = torch.concatenate((sample_directions, sample_direction_map))
+            sample_weights = torch.concatenate((sample_weights, weight_cur_frame))
+
+            # TODO: Jacobian?
+            if adjust_level:
+                j = 3 / 4 * torch.log2(torch_util.torch_dot_vectorized_2D(sample_direction_map, sample_direction_map))
+                level += j
+
+            sample_levels = torch.concatenate((sample_levels, level))
+
+        stream = streams[dir_idx]
+        process_input(dir_idx,stream,results,sample_directions,sample_levels,sample_weights,ggx_ref_list[dir_idx])
+
+    for stream in streams:
+        stream.synchronize()
+
+    tmp = torch.stack(results)
+    mean_error = tmp.mean()
+    return mean_error
+
+
+
+
+def multiple_texel_full_optimization_parallel_cuda(n_sample_per_frame, n_sample_per_level ,constant= False, n_process = 8, ggx_alpha = 0.1):
     """
 
     :param texel_dirs:

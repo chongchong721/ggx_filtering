@@ -218,13 +218,13 @@ def torch_create_pixel_index(resolution,dimension):
     """
     if dimension == 1:
         #resolution + 0.5 is used because arange only generates [start,stop)
-        idx_array = torch.arange(0.5, resolution+0.5,1.0)
+        idx_array = torch.arange(0.5, resolution+0.5,1.0, device=device)
         return idx_array
     elif dimension == 2:
         row_res = resolution[0]
         col_res = resolution[1]
-        row_array = torch.arange(0.5, row_res+0.5,1.0)
-        col_array = torch.arange(0.5, col_res+0.5,1.0)
+        row_array = torch.arange(0.5, row_res+0.5,1.0, device=device)
+        col_array = torch.arange(0.5, col_res+0.5,1.0, device=device)
         # xv is row, yv is col
         xv,yv = torch.meshgrid(row_array,col_array,indexing='ij')
         return xv,yv
@@ -662,9 +662,9 @@ def create_downsample_pattern(face_extended_res):
     :return: return the uv index
     """
     #point pattern 1, start from 1.25 -> 3.25 -> 5.25 -> res - 2.75
-    point_idx_pattern1 = torch.arange(5/4 ,face_extended_res - 3/4, 2)
+    point_idx_pattern1 = torch.arange(5/4 ,face_extended_res - 3/4, 2, device=device)
     #point pattern 2, start from 2.75 -> 4.75 -> res - 1.25
-    point_idx_pattern2 = torch.arange(2+3/4,face_extended_res - 1 - 1/4 + 2, 2)
+    point_idx_pattern2 = torch.arange(2+3/4,face_extended_res - 1 - 1/4 + 2, 2, device=device)
 
     point_idx_pattern1 -= 1
     point_idx_pattern2 -= 1

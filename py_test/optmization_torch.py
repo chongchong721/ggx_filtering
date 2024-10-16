@@ -446,42 +446,50 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
         streams = [torch.cuda.Stream(device=device) for _ in range(n_sample_per_level)]
         results = [None] * 50
 
-
-    for i in range(n_epoch):
-        optimizer.zero_grad()
-        params = model()
-
-        # start_time = time.time()
-
-        if not cuda_stream:
-            error_list,result_list = test_multiple_texel_full_optimization(all_locations,n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame, coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
-
-            # end_time = time.time()
-            # elapsed_time = end_time - start_time
-            # print(f"computing error took {elapsed_time:.4f} seconds to execute.")
+    with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+            schedule=torch.profiler.schedule(wait=1, warmup=1, active=3),
+            on_trace_ready=torch.profiler.tensorboard_trace_handler('./log'),
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True
+    ) as prof:
+        for i in range(n_epoch):
+            optimizer.zero_grad()
+            params = model()
 
             # start_time = time.time()
 
-            tmp = torch.stack(error_list)
-            mean_error = tmp.mean()
-        else:
-            mean_error = test_multiple_texel_opt_cuda_stream(n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame,streams,results ,coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
-        mean_error.backward()
-        optimizer.step()
+            if not cuda_stream:
+                error_list,result_list = test_multiple_texel_full_optimization(all_locations,n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame, coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
 
-        # end_time = time.time()
-        # elapsed_time = end_time - start_time
-        # print(f"Back propagation took {elapsed_time:.4f} seconds to execute.")
+                # end_time = time.time()
+                # elapsed_time = end_time - start_time
+                # print(f"computing error took {elapsed_time:.4f} seconds to execute.")
 
-        logger.info("[it{}]:loss is{}".format(i,mean_error.item()))
+                # start_time = time.time()
 
-        if i % 500 == 0:
-            #normalize result
-            #result /= torch.sum(result)
-            #visualization.visualize_optim_result(ggx_ref, result)
-            logger.info(f"saving model")
-            save_model(model, "./model/" + model_name)
-            #logger.info(f"[it{i}]Loss: {mean_error.item()}")
+                tmp = torch.stack(error_list)
+                mean_error = tmp.mean()
+            else:
+                mean_error = test_multiple_texel_opt_cuda_stream(n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame,streams,results ,coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
+            mean_error.backward()
+            optimizer.step()
+            prof.step()
+            # end_time = time.time()
+            # elapsed_time = end_time - start_time
+            # print(f"Back propagation took {elapsed_time:.4f} seconds to execute.")
+
+            logger.info("[it{}]:loss is{}".format(i,mean_error.item()))
+
+            if i % 500 == 0:
+                #normalize result
+                #result /= torch.sum(result)
+                #visualization.visualize_optim_result(ggx_ref, result)
+                logger.info(f"saving model")
+                save_model(model, "./model/" + model_name)
+                #logger.info(f"[it{i}]Loss: {mean_error.item()}")
+
 
     logger.info(f"MAX n_iter {n_epoch} reached")
 

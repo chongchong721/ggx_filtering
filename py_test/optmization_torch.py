@@ -459,7 +459,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             tmp = torch.stack(error_list)
             mean_error = tmp.mean()
         else:
-            mean_error = test_multiple_texel_opt_cuda_stream(n_sample_per_frame,n_sample_per_level,weight_per_frame,xyz_per_frame,theta_phi_per_frame, coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
+            mean_error = test_multiple_texel_opt_cuda_stream(n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame, coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
         mean_error.backward()
         optimizer.step()
 
@@ -983,7 +983,7 @@ if __name__ == "__main__":
 
     #t = create_downsample_pattern(130)
     #t = torch_uv_to_xyz_vectorized(t,0)
-    optimize_multiple_locations(50,False,8, ggx_alpha, adjust_level=True)
+    optimize_multiple_locations(50,False,8, ggx_alpha, adjust_level=True, cuda_stream=True)
     #optimize_function()
 
     # dummy location

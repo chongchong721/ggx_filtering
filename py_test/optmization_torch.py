@@ -441,6 +441,12 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     optimizer = optim.Adam(model.parameters(), lr=5e-5)
     n_epoch = 1000000
 
+
+    if cuda_stream:
+        streams = [torch.cuda.Stream(device=device) for _ in range(n_sample_per_level)]
+        results = [None] * 50
+
+
     for i in range(n_epoch):
         optimizer.zero_grad()
         params = model()
@@ -459,7 +465,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             tmp = torch.stack(error_list)
             mean_error = tmp.mean()
         else:
-            mean_error = test_multiple_texel_opt_cuda_stream(n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame, coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
+            mean_error = test_multiple_texel_opt_cuda_stream(n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame,streams,results ,coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
         mean_error.backward()
         optimizer.step()
 
@@ -715,7 +721,7 @@ def chunk_list(lst, chunk_size):
     return [lst[i:i + chunk_size] for i in range(0, len(lst), chunk_size)]
 
 
-def test_multiple_texel_opt_cuda_stream(n_sample_per_frame, n_sample_per_level ,ggx_ref_list, weight_list, xyz_list, theta_phi_list ,coef_table=None, constant= False, adjust_level = False, device = torch.device('cpu')):
+def test_multiple_texel_opt_cuda_stream(n_sample_per_frame, n_sample_per_level ,ggx_ref_list, weight_list, xyz_list, theta_phi_list ,streams,results,coef_table=None, constant= False, adjust_level = False, device = torch.device('cpu')):
     """
 
     :param n_sample_per_frame:
@@ -730,8 +736,6 @@ def test_multiple_texel_opt_cuda_stream(n_sample_per_frame, n_sample_per_level ,
     :param device:
     :return:
     """
-    streams = [torch.cuda.Stream(device=torch.device("cuda")) for _ in range(n_sample_per_level)]
-    results = [None] * 50
     if coef_table is None:
         # a single coefficient table in shape [5,3,nsample_per_frame * 3]
 

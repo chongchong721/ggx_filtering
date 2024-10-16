@@ -100,7 +100,7 @@ def error_func(x, texel_direction, n_sample_per_frame, ggx_ref, constant= False)
     return error, result
 
 
-def test_multiple_texel_full_optimization(texel_dirs,n_sample_per_frame, n_sample_per_level ,ggx_ref_list, weight_list, xyz_list, theta_phi_list ,coef_table=None, constant= False, adjust_level = False):
+def test_multiple_texel_full_optimization(texel_dirs,n_sample_per_frame, n_sample_per_level ,ggx_ref_list, weight_list, xyz_list, theta_phi_list ,coef_table=None, constant= False, adjust_level = False, device = torch.device('cpu')):
     """
 
     :param texel_dirs:
@@ -129,9 +129,9 @@ def test_multiple_texel_full_optimization(texel_dirs,n_sample_per_frame, n_sampl
 
 
         #texel_direction = texel_dirs[dir_idx,:]
-        sample_directions = torch.empty((0, 3))
-        sample_weights = torch.empty((0,))
-        sample_levels = torch.empty((0,))
+        sample_directions = torch.empty((0, 3)).to(device)
+        sample_weights = torch.empty((0,)).to(device)
+        sample_levels = torch.empty((0,)).to(device)
         for i in range(3):
             X, Y, Z = xyz_list[i][0][dir_idx],xyz_list[i][1][dir_idx],xyz_list[i][2][dir_idx]
             theta2, phi2 = theta_phi_list[i][2][dir_idx],theta_phi_list[i][3][dir_idx]
@@ -435,7 +435,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
         # start_time = time.time()
 
-        error_list,result_list = test_multiple_texel_full_optimization(all_locations,n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame, coef_table = params, constant=constant, adjust_level=adjust_level)
+        error_list,result_list = test_multiple_texel_full_optimization(all_locations,n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame, coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
 
         # end_time = time.time()
         # elapsed_time = end_time - start_time

@@ -5,6 +5,10 @@ import numpy as np
 
 chan_count = 1
 
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
 def level_to_res(level, n_level):
     """
     Get this level's mipmap resolution. Assume the lowest resolution is 2*2
@@ -24,7 +28,7 @@ def initialize_mipmaps(n_level):
     mipmaps = []
     for i in range(n_level):
         res = level_to_res(i, n_level)
-        tmp = torch.zeros((6, res, res, chan_count))
+        tmp = torch.zeros((6, res, res, chan_count), device=device)
         mipmaps.append(tmp)
     return mipmaps
 
@@ -73,29 +77,29 @@ def torch_uv_to_xyz_vectorized(uv:torch.Tensor ,idx, normalize_flag=False):
     vc = 2.0 * v - 1.0
 
     if idx == 0:
-        x = torch.ones_like(uc)
+        x = torch.ones_like(uc, device=device)
         y = vc
         z = -uc
     elif idx == 1:
-        x = -torch.ones_like(uc)
+        x = -torch.ones_like(uc, device=device)
         y = vc
         z = uc
     elif idx == 2:
         x = uc
-        y = torch.ones_like(uc)
+        y = torch.ones_like(uc, device=device)
         z = -vc
     elif idx == 3:
         x = uc
-        y = -torch.ones_like(uc)
+        y = -torch.ones_like(uc, device=device)
         z = vc
     elif idx == 4:
         x = uc
         y = vc
-        z = torch.ones_like(uc)
+        z = torch.ones_like(uc, device=device)
     elif idx == 5:
         x = -uc
         y = vc
-        z = -torch.ones_like(uc)
+        z = -torch.ones_like(uc, device=device)
     else:
         raise NotImplementedError
 
@@ -128,7 +132,7 @@ def torch_gen_frame_xyz(faces_xyz, frame_idx):
     :return:
     """
     Z = torch_normalized(faces_xyz, axis=-1)
-    polar_axis = torch.zeros_like(Z)
+    polar_axis = torch.zeros_like(Z, device=device)
     if frame_idx == 0 or frame_idx == 1 or frame_idx == 2:
         polar_axis[...,frame_idx] = 1.0
     else:
@@ -178,14 +182,14 @@ def torch_gen_theta_phi(faces_xyz,frame_idx, follow_code = False):
 
 
 
-    theta = torch.zeros_like(nx)
+    theta = torch.zeros_like(nx, device=device)
     theta[(ny < nx) & (ny <= -0.999)] = nx[(ny < nx) & (ny <= -0.999)]
     theta[(ny < nx) & (ny > -0.999)] = ny[(ny < nx) & (ny > -0.999)]
     theta[(nx <= ny) & (ny >= 0.999)] = -nx[(nx <= ny) & (ny >= 0.999)]
     theta[(nx <= ny) & (ny < 0.999)] = -ny[(nx <= ny) & (ny < 0.999)]
 
 
-    phi = torch.zeros_like(nx)
+    phi = torch.zeros_like(nx, device=device)
     phi[nz <= -0.999] = -max_xy[nz <= -0.999]
     phi[nz >= 0.999] = max_xy[nz >= 0.999]
     phi[(nz > -0.999) & (nz < 0.999)] = nz[(nz > -0.999) & (nz < 0.999)]
@@ -235,7 +239,7 @@ def torch_gen_boundary_uv_for_interp(edge_side,reverse_flag,cubemap_res):
     :param cubemap_res:
     :return:
     """
-    uv = torch.zeros((cubemap_res,2))
+    uv = torch.zeros((cubemap_res,2), device=device)
     uv_ascending_order = torch_create_pixel_index(cubemap_res,1)
 
     uv_ascending_order = uv_ascending_order / cubemap_res
@@ -249,20 +253,20 @@ def torch_gen_boundary_uv_for_interp(edge_side,reverse_flag,cubemap_res):
 
     if edge_side == "L":
         # u is 0 while v goes from 1 to 0
-        uv[:,0] = torch.full((cubemap_res,),uv_min - 2 * epsilon)
+        uv[:,0] = torch.full((cubemap_res,),uv_min - 2 * epsilon, device=device)
         uv[:,1] = torch.flip(uv_ascending_order,[0])
     elif edge_side == "R":
         # u is 1 while v gose from 1 to 0
-        uv[:,0] = torch.full((cubemap_res,),uv_max + 2 * epsilon)
+        uv[:,0] = torch.full((cubemap_res,),uv_max + 2 * epsilon, device=device)
         uv[:,1] = torch.flip(uv_ascending_order,[0])
     elif edge_side == "U":
         # v is 1 while u goes from 0 to 1
         uv[:,0] = uv_ascending_order
-        uv[:,1] = torch.full((cubemap_res,),uv_max + 2 * epsilon)
+        uv[:,1] = torch.full((cubemap_res,),uv_max + 2 * epsilon, device=device)
     elif edge_side == "D":
         # v is 0 while u goes from 0 to 1
         uv[:,0] = uv_ascending_order
-        uv[:,1] = torch.full((cubemap_res,),uv_min - 2 * epsilon)
+        uv[:,1] = torch.full((cubemap_res,),uv_min - 2 * epsilon, device=device)
     else:
         raise NotImplementedError
 
@@ -280,7 +284,7 @@ def torch_gen_extended_uv_table(face_res):
     down_uv = torch_gen_boundary_uv_for_interp('D', False, face_res)
 
     # generate face uv
-    uv_table = torch.zeros((face_extended_res, face_extended_res, 2))
+    uv_table = torch.zeros((face_extended_res, face_extended_res, 2), device=device)
     uv_ascending_order = torch_create_pixel_index(face_res, 1)
     uv_ascending_order /= face_res
     epsilon = uv_ascending_order.min()
@@ -319,10 +323,10 @@ def torch_xyz_to_uv_vectorized(xyz:torch.Tensor):
     is_y_positive = y > 0
     is_z_positive = z > 0
 
-    face_idx = torch.zeros(xyz.shape[:-1],dtype = torch.int)
-    u_idx = torch.zeros_like(face_idx,dtype=abs_x.dtype)
-    v_idx = torch.zeros_like(face_idx,dtype=abs_x.dtype)
-    max_axis = torch.zeros_like(face_idx,dtype=abs_x.dtype)
+    face_idx = torch.zeros(xyz.shape[:-1],dtype = torch.int, device=device)
+    u_idx = torch.zeros_like(face_idx,dtype=abs_x.dtype, device=device)
+    v_idx = torch.zeros_like(face_idx,dtype=abs_x.dtype, device=device)
+    max_axis = torch.zeros_like(face_idx,dtype=abs_x.dtype, device=device)
 
     face_0_condition = is_x_positive & (abs_x >= abs_y) & (abs_x >= abs_z)
     face_1_condition = (~is_x_positive) & (abs_x >= abs_y) & (abs_x >= abs_z)
@@ -483,7 +487,7 @@ def process_bilinear_samples(trilerp_sample_info: {}, mipmaps: []):
 
         # assign all p0,p1,p2,p3
         # we create a temporary extended mipmap for now, and we will add them back later
-        extended_mipmap_cur_level = torch.zeros((6, cur_res + 2, cur_res + 2, mipmaps[level_idx].shape[-1]),dtype=p0.dtype)
+        extended_mipmap_cur_level = torch.zeros((6, cur_res + 2, cur_res + 2, mipmaps[level_idx].shape[-1]),dtype=p0.dtype, device=device)
 
         extended_mipmap_cur_level.index_put_((cur_face,v_location,u_location_left),p0.reshape((-1,chan_count)),accumulate=True)
         extended_mipmap_cur_level.index_put_((cur_face,v_location,u_location),p1.reshape((-1,chan_count)),accumulate=True)
@@ -524,7 +528,7 @@ def process_extended_face(extended_mipmap):
     # for now we ignore the corner
     extended_res = extended_mipmap.shape[1]
     original_res = extended_res - 2
-    original_map = torch.zeros((6, original_res, original_res, extended_mipmap.shape[-1]))
+    original_map = torch.zeros((6, original_res, original_res, extended_mipmap.shape[-1]), device=device)
 
     for face_idx in range(6):
         idx_info, edge_side_info, reverse_info = get_edge_information(face_idx)
@@ -590,7 +594,7 @@ def process_extended_face(extended_mipmap):
         pixel_location_i = corner_pixel_i[i]
         pixel_location_j = corner_pixel_j[i]
 
-        val = torch.zeros(extended_mipmap.shape[-1])
+        val = torch.zeros(extended_mipmap.shape[-1], device=device)
 
         for j in range(len(corner_face_list)):
             face_idx = corner_face_list[j]
@@ -639,7 +643,7 @@ def bilerp_inverse(location, portion, u_right, u_left, v_up, v_bot):
 
 def downsample_xyz_pattern_full(face_extended_res):
 
-    xyz = torch.zeros((6, face_extended_res - 2, face_extended_res - 2, 3))
+    xyz = torch.zeros((6, face_extended_res - 2, face_extended_res - 2, 3), device=device)
 
     for face_idx in range(6):
         uv = create_downsample_pattern(face_extended_res)
@@ -712,7 +716,7 @@ def push_back(mipmaps):
         cur_level = mipmaps[level_idx]
         res = level_to_res(level_idx, 7)
         extended_upper_res = res * 2 + 2
-        extended_upper_level = torch.zeros((6, extended_upper_res, extended_upper_res, cur_level.shape[-1]))
+        extended_upper_level = torch.zeros((6, extended_upper_res, extended_upper_res, cur_level.shape[-1]), device=device)
 
 
         """
@@ -727,7 +731,7 @@ def push_back(mipmaps):
         j_pattern_bot_left = j[:,1::2,0::2]
         j_pattern_bot_right = j[:,1::2,1::2]
 
-        j_selection = torch.zeros((2,2) + j_pattern_upper_left.shape)
+        j_selection = torch.zeros((2,2) + j_pattern_upper_left.shape, device=device)
         j_selection[0,0] = j_pattern_upper_left
         j_selection[0,1] = j_pattern_upper_right
         j_selection[1,0] = j_pattern_bot_left
@@ -736,7 +740,7 @@ def push_back(mipmaps):
         # since we are doing 1 element of each sample(and repeat 16 times), each element has the same jacobian location,
         # we can vectorize this, and we can precaculate the result
 
-        cur_level_unit_selection = torch.zeros(j_selection.shape + (1,))
+        cur_level_unit_selection = torch.zeros(j_selection.shape + (1,), device=device)
         cur_level_unit_selection[0,0] = cur_level * (1 / 128.0 + 1 / 32.0 * j_pattern_upper_left / j_sum).unsqueeze(-1)
         cur_level_unit_selection[0,1] = cur_level * (1 / 128.0 + 1 / 32.0 * j_pattern_upper_right / j_sum).unsqueeze(-1)
         cur_level_unit_selection[1,0] = cur_level * (1 / 128.0 + 1 / 32.0 * j_pattern_bot_left / j_sum).unsqueeze(-1)

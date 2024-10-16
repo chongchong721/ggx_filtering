@@ -181,3 +181,4 @@ one texel optimization:
   face 4 u=0.8 v=0.2
   adjust level -> higher value?
 
+use a point, so that it recovers ggx distribution?

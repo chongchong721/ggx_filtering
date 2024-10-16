@@ -28,6 +28,12 @@ Optimization routine
 All the mipmaps here have only one channel, which is the weight/contribution
 
 """
+def get_device():
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
+    return device
 
 
 
@@ -94,7 +100,7 @@ def error_func(x, texel_direction, n_sample_per_frame, ggx_ref, constant= False)
     return error, result
 
 
-def test_multiple_texel_full_optimization(texel_dirs,n_sample_per_frame, n_sample_per_level ,ggx_ref_list, weight_list, xyz_list, theta_phi_list ,coef_table=None, constant= False):
+def test_multiple_texel_full_optimization(texel_dirs,n_sample_per_frame, n_sample_per_level ,ggx_ref_list, weight_list, xyz_list, theta_phi_list ,coef_table=None, constant= False, adjust_level = False):
     """
 
     :param texel_dirs:
@@ -177,6 +183,9 @@ def test_multiple_texel_full_optimization(texel_dirs,n_sample_per_frame, n_sampl
             sample_weights = torch.concatenate((sample_weights, weight_cur_frame))
 
             #TODO: Jacobian?
+            if adjust_level:
+                j = 3 / 4 * torch.log2(torch_util.torch_dot_vectorized_2D(sample_direction_map, sample_direction_map))
+                level += j
 
             sample_levels = torch.concatenate((sample_levels, level))
 
@@ -354,16 +363,32 @@ def precompute_opt_info(texel_directions, n_sample_per_level):
     return weight_per_frame, xyz_per_frame, theta_phi_per_frame
 
 
-def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1):
+def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False):
     """
     To speed up, a lot of things can be precomputed, including the relative XYZ,the frame weight
     we don't have to compute this in every iteration
     :param n_sample_per_level:
     :return:
     """
+    device = get_device()
+
+
 
     logger = logging.getLogger(__name__)
-    logging.basicConfig(filename='optim_info_multi_ggx_' + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level) + '.log', filemode='a', level=logging.INFO,
+
+    log_name = 'optim_info_multi_ggx_' + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+
+    if constant:
+        log_name = log_name + "_constant"
+    else:
+        log_name = log_name + "_quad"
+
+    if adjust_level:
+        log_name = log_name + "_ladj"
+
+    log_name = log_name + '.log'
+
+    logging.basicConfig(filename=log_name, filemode='a', level=logging.INFO,
                         format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s', datefmt='%H:%M:%S')
     logger.info("\n\n")
 
@@ -376,6 +401,9 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     else:
         model_name = "quad_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
 
+    if adjust_level:
+        model_name = model_name + "_ladj"
+
     if not constant:
         model = SimpleModel(n_sample_per_frame)
     else:
@@ -385,18 +413,20 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
         logger.info("Read model from dict")
         model.load_state_dict(torch.load("./model/" + model_name))
 
+    model.to(device)
+
     ref_list = []
     for i in range(n_sample_per_level):
         location = all_locations[i,:]
         ggx_ref = compute_ggx_distribution_reference(128, ggx_alpha, location)
-        ggx_ref = torch.from_numpy(ggx_ref)
+        ggx_ref = torch.from_numpy(ggx_ref).to(device)
         ggx_ref /= torch.sum(ggx_ref)
         ref_list.append(ggx_ref)
 
-    all_locations = torch.from_numpy(all_locations)
+    all_locations = torch.from_numpy(all_locations).to(device)
     weight_per_frame,xyz_per_frame,theta_phi_per_frame = precompute_opt_info(all_locations, n_sample_per_level)
 
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=5e-5)
     n_epoch = 1000000
 
     for i in range(n_epoch):
@@ -405,7 +435,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
         # start_time = time.time()
 
-        error_list,result_list = test_multiple_texel_full_optimization(all_locations,n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame, coef_table = params, constant=constant)
+        error_list,result_list = test_multiple_texel_full_optimization(all_locations,n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame, coef_table = params, constant=constant, adjust_level=adjust_level)
 
         # end_time = time.time()
         # elapsed_time = end_time - start_time
@@ -463,6 +493,9 @@ def optimize_function():
         model_name = "constant_ggx_" + "{:.3f}".format(ggx_alpha)
     else:
         model_name = "quad_ggx_" + "{:.3f}".format(ggx_alpha)
+
+    if adjust_level:
+        model_name = model_name + "_ladj"
 
     if not constant:
         model = SimpleModel(n_sample_per_frame)
@@ -839,8 +872,8 @@ if __name__ == "__main__":
 
     #t = create_downsample_pattern(130)
     #t = torch_uv_to_xyz_vectorized(t,0)
-    #optimize_multiple_locations(50,False,8, ggx_alpha)
-    optimize_function()
+    optimize_multiple_locations(50,False,8, ggx_alpha, adjust_level=True)
+    #optimize_function()
 
     # dummy location
 

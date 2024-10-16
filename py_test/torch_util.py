@@ -41,6 +41,14 @@ def torch_jacobian_vertorized(xyz):
 
     return j
 
+def torch_dot_vectorized_4D(v1,v2):
+    result = torch.einsum('ijkl,ijkl->ijk', v1, v2)
+    return result
+
+def torch_dot_vectorized_2D(v1,v2):
+    result = torch.einsum('ij,ij->i', v1, v2)
+    return result
+
 
 def torch_uv_to_xyz_vectorized(uv:torch.Tensor ,idx, normalize_flag=False):
     """

@@ -4,6 +4,8 @@ from numpy import dtype
 import map_util
 import mat_util
 from datetime import datetime
+
+from py_test.map_util import sample_location
 from reference import compute_ggx_distribution_reference
 
 import scipy
@@ -15,6 +17,7 @@ import os
 import logging
 
 import torch_util
+import torch_util_all_locations
 
 import torch.multiprocessing as mp
 from torch.multiprocessing import set_start_method
@@ -99,6 +102,99 @@ def error_func(x, texel_direction, n_sample_per_frame, ggx_ref, constant= False)
     error, result = test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_ref, x, constant)
     return error, result
 
+
+
+def test_multiple_texel_full_optimization_vectorized(n_sample_per_frame, n_sample_per_level ,ggx_ref_list, weight_list, xyz_list, theta_phi_list ,coef_table=None, constant= False, adjust_level = False, device = torch.device('cpu')):
+    """
+
+    :param n_sample_per_frame:
+    :param n_sample_per_level:
+    :param ggx_ref_list:
+    :param weight_list:
+    :param xyz_list:
+    :param theta_phi_list:
+    :param coef_table:
+    :param constant:
+    :param adjust_level:
+    :param device:
+    :return:
+    """
+    if coef_table is None:
+        # a single coefficient table in shape [5,3,nsample_per_frame * 3]
+
+        coefficient_table = torch.rand((5, 3, n_sample_per_frame * 3))
+    else:
+        coefficient_table = coef_table
+
+    sample_directions = torch.empty((0, 3), device=device)
+    sample_weights = torch.empty((0,), device=device)
+    sample_levels = torch.empty((0,), device=device)
+    sample_idx = torch.empty((0,), device=device,dtype=torch.int)
+
+
+    for dir_idx in range(n_sample_per_level):
+        for i in range(3):
+            X, Y, Z = xyz_list[i][0][dir_idx],xyz_list[i][1][dir_idx],xyz_list[i][2][dir_idx]
+            theta2, phi2 = theta_phi_list[i][2][dir_idx],theta_phi_list[i][3][dir_idx]
+            frame_weight = weight_list[i][dir_idx]
+
+            if frame_weight == 0:
+                continue
+
+            coeff_start = i * n_sample_per_frame
+            coeff_end = coeff_start + n_sample_per_frame
+            if not constant:
+                coeff_x_table = coefficient_table[0, :, coeff_start:coeff_end]
+                coeff_y_table = coefficient_table[1, :, coeff_start:coeff_end]
+                coeff_z_table = coefficient_table[2, :, coeff_start:coeff_end]
+                coeff_level_table = coefficient_table[3, :, coeff_start:coeff_end]
+                coeff_weight_table = coefficient_table[4, :, coeff_start:coeff_end]
+
+                coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2
+                coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2
+                coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2
+
+
+                level = coeff_level_table[0] + coeff_level_table[1] * theta2 + coeff_level_table[2] * phi2
+                weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2
+            else:
+                coeff_x = coefficient_table[0, coeff_start:coeff_end]
+                coeff_y = coefficient_table[1, coeff_start:coeff_end]
+                coeff_z = coefficient_table[2, coeff_start:coeff_end]
+                level = coefficient_table[3, coeff_start:coeff_end]
+                weight = coefficient_table[4, coeff_start:coeff_end]
+
+            coeff_x = torch.stack((coeff_x, coeff_x, coeff_x), dim=-1)
+            coeff_y = torch.stack((coeff_y, coeff_y, coeff_y), dim=-1)
+            coeff_z = torch.stack((coeff_z, coeff_z, coeff_z), dim=-1)
+
+
+            sample_direction = coeff_x * X + coeff_y * Y + coeff_z * Z
+            abs_direction = torch.abs(sample_direction)
+            max_dir = torch.max(abs_direction, dim=-1).values
+            sample_direction_map = sample_direction / torch.stack([max_dir, max_dir, max_dir], dim=-1)
+
+            weight_cur_frame = weight * frame_weight
+
+            #TODO: how to make weight/level always positive?
+            weight_cur_frame = torch.clip(weight_cur_frame, 0)
+            level = torch.clip(level,0.0,6.0)
+
+            sample_directions = torch.concatenate((sample_directions, sample_direction_map))
+            sample_weights = torch.concatenate((sample_weights, weight_cur_frame))
+            sample_idx = torch.concatenate((sample_idx, torch.full([n_sample_per_frame],dir_idx,device=device,dtype=torch.int)))
+
+            #TODO: Jacobian?
+            if adjust_level:
+                j = 3 / 4 * torch.log2(torch_util.torch_dot_vectorized_2D(sample_direction_map, sample_direction_map))
+                level += j
+
+            sample_levels = torch.concatenate((sample_levels, level))
+
+
+    result = torch_util_all_locations.compute_contribution_full(sample_directions,sample_levels,sample_weights,sample_idx,n_level=7,n_sample_per_level = n_sample_per_level)
+
+    return result
 
 def test_multiple_texel_full_optimization(texel_dirs,n_sample_per_frame, n_sample_per_level ,ggx_ref_list, weight_list, xyz_list, theta_phi_list ,coef_table=None, constant= False, adjust_level = False, device = torch.device('cpu')):
     """
@@ -971,31 +1067,85 @@ def multiple_texel_full_optimization_parallel_cuda(n_sample_per_frame, n_sample_
 
 
 
+def test_vectorized_multiple_opt(ggx_alpha):
+    model_name = "quad_ggx_multi_0.471_20_ladj"
+
+    model = SimpleModel(8)
+
+    if os.path.exists("./model/" + model_name):
+        model.load_state_dict(torch.load("./model/" + model_name))
+
+    params = model()
+
+    n_sample_per_level = 50
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    rng = np.random.default_rng(12345)
+    all_locations = map_util.sample_location(n_sample_per_level,rng)
 
 
 
+    ref_list = []
+    for i in range(n_sample_per_level):
+        location = all_locations[i,:]
+        ggx_ref = compute_ggx_distribution_reference(128, ggx_alpha, location)
+        ggx_ref = torch.from_numpy(ggx_ref).to(device)
+        ggx_ref /= torch.sum(ggx_ref)
+        ref_list.append(ggx_ref)
+
+    all_locations = torch.from_numpy(all_locations).to(device)
+    weight_per_frame, xyz_per_frame, theta_phi_per_frame = precompute_opt_info(all_locations, n_sample_per_level)
+
+    for _ in range(20):
+        start_time = time.time()
+
+        pushed_back_result = test_multiple_texel_full_optimization_vectorized(8,n_sample_per_level,None,weight_per_frame,xyz_per_frame,theta_phi_per_frame,adjust_level=True,device = device, coef_table=params)
+
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print(f"one pushback preparation took {elapsed_time:.4f} seconds to execute.")
 
 
 
+        start_time = time.time()
+        error_list, result_list = test_multiple_texel_full_optimization(all_locations, 8,
+                                                                        n_sample_per_level, ref_list, weight_per_frame,
+                                                                        xyz_per_frame, theta_phi_per_frame,
+                                                                        coef_table=params, constant=False,
+                                                                        adjust_level=True, device=device)
 
+
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print(f"one pushback preparation took {elapsed_time:.4f} seconds to execute.")
+
+    # for i in range(n_sample_per_level):
+    #     result_vectorized = pushed_back_result[i]
+    #     result_single = result_list[i]
+    #
+    #     diff = result_vectorized - result_single
+    #     print("1")
 
 
 if __name__ == "__main__":
     #verify_push_back()
-
-    set_start_method('spawn')
-
-
     import specular
     info = specular.cubemap_level_params(18)
 
     ggx_alpha = info[5].roughness
 
+    test_vectorized_multiple_opt(ggx_alpha)
+
+
+    set_start_method('spawn')
+
+
+
+
     #multiple_texel_full_optimization_parallel(8,50, False, 1, ggx_alpha)
 
     #t = create_downsample_pattern(130)
     #t = torch_uv_to_xyz_vectorized(t,0)
-    optimize_multiple_locations(50,False,8, ggx_alpha, adjust_level=True, cuda_stream=True)
+    #optimize_multiple_locations(50,False,8, ggx_alpha, adjust_level=True, cuda_stream=True)
     #optimize_function()
 
     # dummy location
@@ -1021,17 +1171,17 @@ if __name__ == "__main__":
     #ggx = compute_ggx_distribution_reference(128,0.01,location_global[0:1,:])
     #
     #ggx = torch.from_numpy(ggx)
-    location_global = torch.from_numpy(location_global)
+    #location_global = torch.from_numpy(location_global)
     #test_one_texel_full_optimization(location_global[0:1,:],8,ggx)
-    #
-    level_global = torch.tensor([6.0])
-    n_level_global = 7
-    initial_weight_global = torch.tensor([1.0])
-    #
-    t = torch_util.initialize_mipmaps(n_level_global)
-    sample_info = torch_util.process_trilinear_samples(location_global, level_global, n_level_global,initial_weight_global)
-    t = torch_util.process_bilinear_samples(sample_info,t)
-    final_image = torch_util.push_back(t)
+
+    # level_global = torch.tensor([6.0])
+    # n_level_global = 7
+    # initial_weight_global = torch.tensor([1.0])
+
+    # t = torch_util.initialize_mipmaps(n_level_global)
+    # sample_info = torch_util.process_trilinear_samples(location_global, level_global, n_level_global,initial_weight_global)
+    # t = torch_util.process_bilinear_samples(sample_info,t)
+    # final_image = torch_util.push_back(t)
 
     print("Done")
 

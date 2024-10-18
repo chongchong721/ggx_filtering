@@ -385,7 +385,7 @@ def test_coef(constant:bool,ggx_alpha,n_sample_per_frame,n_multi_loc = None, adj
 
     result = fetch_samples_python_table(mipmaps,3,table,8,constant=constant, j_adjust=False)
 
-    result_level_adjust = fetch_samples_python_table(mipmaps,3,table,8,constant=constant, j_adjust=True)
+    result_level_adjust = fetch_samples_python_table(mipmaps,3,table,8,constant=constant, j_adjust=adjust_level)
 
     diff_level_adjust = ref - result
     diff = ref -result_level_adjust

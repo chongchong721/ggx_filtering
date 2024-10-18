@@ -450,7 +450,7 @@ def process_bilinear_samples(trilerp_sample_info: {}, mipmaps: []):
         cur_u = (uv[:, 0])[condition]
         cur_v = (uv[:, 1])[condition]
 
-        if cur_u.size == 0:
+        if cur_u.size()[0] == 0:
             """
             We do not find any samples located in this level, skip it
             """
@@ -503,6 +503,23 @@ def process_bilinear_samples(trilerp_sample_info: {}, mipmaps: []):
     return mipmaps
 
 
+def move_edge(tmp_val, tmp_idx, tmp_edge, tmp_reverse, original_map):
+    if tmp_reverse:
+        tmp_val = torch.flip(tmp_val,dims=[0])
+
+    if tmp_edge == 'L':
+        original_map[tmp_idx,:, 0, :] += tmp_val
+    elif tmp_edge == 'R':
+        original_map[tmp_idx,:, -1, :] += tmp_val
+    elif tmp_edge == 'U':
+        original_map[tmp_idx,0, :, :] += tmp_val
+    elif tmp_edge == 'D':
+        original_map[tmp_idx,-1, :, :] += tmp_val
+    else:
+        raise NotImplementedError
+
+
+
 def process_extended_face(extended_mipmap):
     """
     move the value in the extended boundaries to the right place
@@ -510,20 +527,6 @@ def process_extended_face(extended_mipmap):
     :return: original_mipmap
     """
 
-    def move_edge(tmp_val, tmp_idx, tmp_edge, tmp_reverse):
-        if tmp_reverse:
-            tmp_val = torch.flip(tmp_val,dims=[0])
-
-        if tmp_edge == 'L':
-            original_map[tmp_idx][:, 0, :] += tmp_val
-        elif tmp_edge == 'R':
-            original_map[tmp_idx][:, -1, :] += tmp_val
-        elif tmp_edge == 'U':
-            original_map[tmp_idx][0, :, :] += tmp_val
-        elif tmp_edge == 'D':
-            original_map[tmp_idx][-1, :, :] += tmp_val
-        else:
-            raise NotImplementedError
 
     # for now we ignore the corner
     extended_res = extended_mipmap.shape[1]
@@ -553,7 +556,7 @@ def process_extended_face(extended_mipmap):
             else:
                 val = cur_face[-1, 1:-1, :]
 
-            move_edge(val, idx, edge, reverse)
+            move_edge(val, idx, edge, reverse, original_map)
 
         # copy the center
         original_map[face_idx] += cur_face[1:-1, 1:-1, :]

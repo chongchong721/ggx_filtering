@@ -5,7 +5,6 @@ import map_util
 import mat_util
 from datetime import datetime
 
-from py_test.map_util import sample_location
 from reference import compute_ggx_distribution_reference
 
 import scipy
@@ -193,6 +192,10 @@ def test_multiple_texel_full_optimization_vectorized(n_sample_per_frame, n_sampl
 
 
     result = torch_util_all_locations.compute_contribution_full(sample_directions,sample_levels,sample_weights,sample_idx,n_level=7,n_sample_per_level = n_sample_per_level)
+
+
+
+
 
     return result
 
@@ -471,7 +474,7 @@ def precompute_opt_info(texel_directions, n_sample_per_level):
     return weight_per_frame, xyz_per_frame, theta_phi_per_frame
 
 
-def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False, cuda_stream = False):
+def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False, cuda_stream = False, vectorize = True):
     """
     To speed up, a lot of things can be precomputed, including the relative XYZ,the frame weight
     we don't have to compute this in every iteration
@@ -530,11 +533,13 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
         ggx_ref = torch.from_numpy(ggx_ref).to(device)
         ggx_ref /= torch.sum(ggx_ref)
         ref_list.append(ggx_ref)
+    if vectorize:
+        ref_list = torch.stack(ref_list)
 
     all_locations = torch.from_numpy(all_locations).to(device)
     weight_per_frame,xyz_per_frame,theta_phi_per_frame = precompute_opt_info(all_locations, n_sample_per_level)
 
-    optimizer = optim.Adam(model.parameters(), lr=5e-5)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
     n_epoch = 1000000
 
 
@@ -542,49 +547,51 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
         streams = [torch.cuda.Stream(device=device) for _ in range(n_sample_per_level)]
         results = [None] * 50
 
-    with torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-            schedule=torch.profiler.schedule(wait=1, warmup=1, active=3),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler('./log'),
-            record_shapes=True,
-            profile_memory=True,
-            with_stack=True
-    ) as prof:
-        for i in range(n_epoch):
-            optimizer.zero_grad()
-            params = model()
+    for i in range(n_epoch):
+        optimizer.zero_grad()
+        params = model()
 
-            # start_time = time.time()
+        # start_time = time.time()
 
-            if not cuda_stream:
-                error_list,result_list = test_multiple_texel_full_optimization(all_locations,n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame, coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
+        if not cuda_stream:
+            if vectorize:
+                pushed_back_result = test_multiple_texel_full_optimization_vectorized(n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame,params,constant, adjust_level, device)
+                # normalize pushed_back result
+                pushed_back_sum = torch.sum(pushed_back_result,dim=[1,2,3,4], keepdim=True)
+                pushed_back_result /= pushed_back_sum
+                diff = torch.abs(ref_list - pushed_back_result)
+                diff = torch.sum(diff,dim=[1,2,3,4])
+                mean_error = torch.mean(diff)
+            else:
+                error_list, result_list = test_multiple_texel_full_optimization(all_locations, n_sample_per_frame,
+                                                                                n_sample_per_level, ref_list,
+                                                                                weight_per_frame, xyz_per_frame,
+                                                                                theta_phi_per_frame, coef_table=params,
+                                                                                constant=constant,
+                                                                                adjust_level=adjust_level,
+                                                                                device=device)
 
-                # end_time = time.time()
-                # elapsed_time = end_time - start_time
-                # print(f"computing error took {elapsed_time:.4f} seconds to execute.")
 
-                # start_time = time.time()
 
                 tmp = torch.stack(error_list)
                 mean_error = tmp.mean()
-            else:
-                mean_error = test_multiple_texel_opt_cuda_stream(n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame,streams,results ,coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
-            mean_error.backward()
-            optimizer.step()
-            prof.step()
-            # end_time = time.time()
-            # elapsed_time = end_time - start_time
-            # print(f"Back propagation took {elapsed_time:.4f} seconds to execute.")
+        else:
+            mean_error = test_multiple_texel_opt_cuda_stream(n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame,streams,results ,coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
+        mean_error.backward()
+        optimizer.step()
+        # end_time = time.time()
+        # elapsed_time = end_time - start_time
+        # print(f"Back propagation took {elapsed_time:.4f} seconds to execute.")
 
-            logger.info("[it{}]:loss is{}".format(i,mean_error.item()))
+        logger.info("[it{}]:loss is{}".format(i,mean_error.item()))
 
-            if i % 500 == 0:
-                #normalize result
-                #result /= torch.sum(result)
-                #visualization.visualize_optim_result(ggx_ref, result)
-                logger.info(f"saving model")
-                save_model(model, "./model/" + model_name)
-                #logger.info(f"[it{i}]Loss: {mean_error.item()}")
+        if i % 500 == 0:
+            #normalize result
+            #result /= torch.sum(result)
+            #visualization.visualize_optim_result(ggx_ref, result)
+            logger.info(f"saving model")
+            save_model(model, "./model/" + model_name)
+            #logger.info(f"[it{i}]Loss: {mean_error.item()}")
 
 
     logger.info(f"MAX n_iter {n_epoch} reached")
@@ -1131,9 +1138,9 @@ if __name__ == "__main__":
     import specular
     info = specular.cubemap_level_params(18)
 
-    ggx_alpha = info[5].roughness
+    ggx_alpha = info[4].roughness
 
-    test_vectorized_multiple_opt(ggx_alpha)
+    #test_vectorized_multiple_opt(ggx_alpha)
 
 
     set_start_method('spawn')
@@ -1145,7 +1152,7 @@ if __name__ == "__main__":
 
     #t = create_downsample_pattern(130)
     #t = torch_uv_to_xyz_vectorized(t,0)
-    #optimize_multiple_locations(50,False,8, ggx_alpha, adjust_level=True, cuda_stream=True)
+    optimize_multiple_locations(80,False,8, ggx_alpha, adjust_level=True, cuda_stream=False,vectorize=True)
     #optimize_function()
 
     # dummy location

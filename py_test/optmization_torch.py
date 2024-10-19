@@ -70,12 +70,6 @@ def process_cmd():
     adjust_level = args.adjustlevel
     optimizer = optimizer.lower()
 
-    print(f"Optimizer: {optimizer}")
-    print(f"GGX Level: {ggx_level}")
-    print(f"NDir: {ndir}")
-    print(f"Constant: {constant}")
-    print(f"Adjust Level: {adjust_level}")
-
     return ndir, ggx_level, constant, adjust_level, optimizer
 
 
@@ -640,7 +634,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     if optimizer_type == "adam":
         optimizer = optim.Adam(model.parameters(), lr=1e-4)
     elif optimizer_type == "bfgs":
-        optimizer = optim.LBFGS(model.parameters(), lr = 0.7)
+        optimizer = optim.LBFGS(model.parameters(), lr = 0.7, line_search_fn="strong_wolfe")
     else:
         raise ValueError("Unknown optimizer type")
     n_epoch = 1000000
@@ -724,7 +718,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     else:
         for i in range(n_epoch):
             optimizer.step(closure)
-            logger.info("[it{}]:loss is{}".format(i, final_loss))
+            logger.info("[it{}]:loss is{}".format(i, final_loss_record[0]))
             if i % 500 == 0:
                 logger.info(f"saving model")
                 save_model(model, "./model/" + model_name)

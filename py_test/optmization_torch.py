@@ -1,5 +1,6 @@
 import numpy as np
 from numpy import dtype
+from sympy.physics.units import action
 
 import map_util
 import mat_util
@@ -23,6 +24,63 @@ from torch.multiprocessing import set_start_method
 
 import time
 
+import sys
+
+import argparse
+
+def process_cmd():
+    def str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-o", "--optimizer", type=str)
+    parser.add_argument("-l", "--ggxlevel",type=int)
+    parser.add_argument("-n", "--ndir",type=int)
+    parser.add_argument(
+        '-c', '--constant',
+        type=str2bool,
+        nargs='?',
+        const=True,
+        default=False,
+        help='Enable or disable constant mode (True/False).'
+    )
+
+    parser.add_argument(
+        '-a', '--adjustlevel',
+        type=str2bool,
+        nargs='?',
+        const=True,
+        default=False,
+        help='Enable or disable adjust level mode (True/False).'
+    )
+
+    args = parser.parse_args()
+
+    optimizer = args.optimizer
+    ggx_level = args.ggxlevel
+    ndir = args.ndir
+    constant = args.constant
+    adjust_level = args.adjustlevel
+    optimizer = optimizer.lower()
+
+    print(f"Optimizer: {optimizer}")
+    print(f"GGX Level: {ggx_level}")
+    print(f"NDir: {ndir}")
+    print(f"Constant: {constant}")
+    print(f"Adjust Level: {adjust_level}")
+
+    return ndir, ggx_level, constant, adjust_level, optimizer
+
+
+
+
 
 """
 Optimization routine
@@ -36,6 +94,59 @@ def get_device():
     else:
         device = torch.device('cpu')
     return device
+
+
+
+def log_filename(ggx_alpha, n_sample_per_level,constant,adjust_level, optim_method:str ,post_fix_for_dirs = None):
+    log_name = 'optim_info_multi_ggx_' + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+
+    if constant:
+        log_name = log_name + "_constant"
+    else:
+        log_name = log_name + "_quad"
+
+    if adjust_level:
+        log_name = log_name + "_ladj"
+
+    log_name = log_name + "_" + optim_method
+    if post_fix_for_dirs is not None:
+        log_name = log_name + "_" + post_fix_for_dirs
+
+    log_name = log_name + '.log'
+
+    return log_name
+
+def dir_filename(ggx_alpha, constant, n_sample_per_level, adjust_level, optim_method:str ,post_fix_for_dirs = None):
+    if constant:
+        dir_name = "constant_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+    else:
+        dir_name = "quad_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+
+    if adjust_level:
+        dir_name = dir_name + "_ladj"
+
+    dir_name = dir_name + "_" + optim_method
+    dir_name = dir_name + "_dirs"
+    if post_fix_for_dirs is not None:
+        dir_name = dir_name + "_" + post_fix_for_dirs
+    dir_name = dir_name + ".pt"
+
+    return dir_name
+
+def model_filename(ggx_alpha, constant, n_sample_per_level, adjust_level, optim_method:str ,post_fix_for_dirs = None):
+    if constant:
+        model_name = "constant_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+    else:
+        model_name = "quad_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+
+    if adjust_level:
+        model_name = model_name + "_ladj"
+
+    model_name = model_name + "_" + optim_method
+    if post_fix_for_dirs is not None:
+        model_name = model_name + "_" + post_fix_for_dirs
+
+    return model_name
 
 
 
@@ -474,7 +585,7 @@ def precompute_opt_info(texel_directions, n_sample_per_level):
     return weight_per_frame, xyz_per_frame, theta_phi_per_frame
 
 
-def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False, cuda_stream = False, vectorize = True):
+def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False, cuda_stream = False, vectorize = True, optimizer_type = "adam"):
     """
     To speed up, a lot of things can be precomputed, including the relative XYZ,the frame weight
     we don't have to compute this in every iteration
@@ -487,17 +598,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
     logger = logging.getLogger(__name__)
 
-    log_name = 'optim_info_multi_ggx_' + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
-
-    if constant:
-        log_name = log_name + "_constant"
-    else:
-        log_name = log_name + "_quad"
-
-    if adjust_level:
-        log_name = log_name + "_ladj"
-
-    log_name = log_name + '.log'
+    log_name = log_filename(ggx_alpha,n_sample_per_level,constant,adjust_level,optimizer_type)
 
     logging.basicConfig(filename=log_name, filemode='a', level=logging.INFO,
                         format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s', datefmt='%H:%M:%S')
@@ -506,14 +607,11 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     rng = np.random.default_rng(12345)
     all_locations = map_util.sample_location(n_sample_per_level,rng)
 
+    dir_name = dir_filename(ggx_alpha, constant, n_sample_per_level, adjust_level, optimizer_type)
+    torch.save(torch.from_numpy(all_locations), dir_name)
 
-    if constant:
-        model_name = "constant_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
-    else:
-        model_name = "quad_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
 
-    if adjust_level:
-        model_name = model_name + "_ladj"
+    model_name = model_filename(ggx_alpha,constant,n_sample_per_level,adjust_level,optimizer_type)
 
     if not constant:
         model = SimpleModel(n_sample_per_frame)
@@ -539,7 +637,12 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     all_locations = torch.from_numpy(all_locations).to(device)
     weight_per_frame,xyz_per_frame,theta_phi_per_frame = precompute_opt_info(all_locations, n_sample_per_level)
 
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    if optimizer_type == "adam":
+        optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    elif optimizer_type == "bfgs":
+        optimizer = optim.LBFGS(model.parameters(), lr = 0.7)
+    else:
+        raise ValueError("Unknown optimizer type")
     n_epoch = 1000000
 
 
@@ -547,7 +650,9 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
         streams = [torch.cuda.Stream(device=device) for _ in range(n_sample_per_level)]
         results = [None] * 50
 
-    for i in range(n_epoch):
+    final_loss_record = [0] #used in BFGS
+
+    def closure():
         optimizer.zero_grad()
         params = model()
 
@@ -555,13 +660,18 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
         if not cuda_stream:
             if vectorize:
-                pushed_back_result = test_multiple_texel_full_optimization_vectorized(n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame,params,constant, adjust_level, device)
+                tmp_pushed_back_result = test_multiple_texel_full_optimization_vectorized(n_sample_per_frame,
+                                                                                      n_sample_per_level, ref_list,
+                                                                                      weight_per_frame, xyz_per_frame,
+                                                                                      theta_phi_per_frame, params,
+                                                                                      constant, adjust_level, device)
                 # normalize pushed_back result
-                pushed_back_sum = torch.sum(pushed_back_result,dim=[1,2,3,4], keepdim=True)
-                pushed_back_result /= pushed_back_sum
-                diff = torch.abs(ref_list - pushed_back_result)
-                diff = torch.sum(diff,dim=[1,2,3,4])
+                tmp_pushed_back_sum = torch.sum(tmp_pushed_back_result, dim=[1, 2, 3, 4], keepdim=True)
+                tmp_pushed_back_result /= tmp_pushed_back_sum
+                diff = torch.abs(ref_list - tmp_pushed_back_result)
+                diff = torch.sum(diff, dim=[1, 2, 3, 4])
                 mean_error = torch.mean(diff)
+                final_loss_record[0] = mean_error.item()
             else:
                 error_list, result_list = test_multiple_texel_full_optimization(all_locations, n_sample_per_frame,
                                                                                 n_sample_per_level, ref_list,
@@ -571,27 +681,53 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                                                                                 adjust_level=adjust_level,
                                                                                 device=device)
 
-
-
                 tmp = torch.stack(error_list)
                 mean_error = tmp.mean()
         else:
-            mean_error = test_multiple_texel_opt_cuda_stream(n_sample_per_frame,n_sample_per_level,ref_list,weight_per_frame,xyz_per_frame,theta_phi_per_frame,streams,results ,coef_table = params, constant=constant, adjust_level=adjust_level, device=device)
+            mean_error = test_multiple_texel_opt_cuda_stream(n_sample_per_frame, n_sample_per_level, ref_list,
+                                                             weight_per_frame, xyz_per_frame, theta_phi_per_frame,
+                                                             streams, results, coef_table=params, constant=constant,
+                                                             adjust_level=adjust_level, device=device)
+
         mean_error.backward()
-        optimizer.step()
-        # end_time = time.time()
-        # elapsed_time = end_time - start_time
-        # print(f"Back propagation took {elapsed_time:.4f} seconds to execute.")
+        return mean_error
 
-        logger.info("[it{}]:loss is{}".format(i,mean_error.item()))
 
-        if i % 500 == 0:
-            #normalize result
-            #result /= torch.sum(result)
-            #visualization.visualize_optim_result(ggx_ref, result)
-            logger.info(f"saving model")
-            save_model(model, "./model/" + model_name)
-            #logger.info(f"[it{i}]Loss: {mean_error.item()}")
+    if optimizer_type == "adam":
+        for i in range(n_epoch):
+            loss = closure()
+            if not torch.isnan(loss):
+                optimizer.step()
+            else:
+                logger.info("NaN loss detected")
+                logger.info("Current parameters are", model().detach().numpy())
+                pushed_back_result = test_multiple_texel_full_optimization_vectorized(n_sample_per_frame,
+                                                                                      n_sample_per_level, ref_list,
+                                                                                      weight_per_frame, xyz_per_frame,
+                                                                                      theta_phi_per_frame, model(),
+                                                                                      constant, adjust_level, device)
+                # normalize pushed_back result
+                pushed_back_sum = torch.sum(pushed_back_result, dim=[1, 2, 3, 4], keepdim=True)
+                logger.info("is pushed_back_result NaN? ", torch.isnan(pushed_back_result).any())
+                logger.info("is pushed_back_sum 0?", pushed_back_sum == 0.0)
+
+
+            logger.info("[it{}]:loss is{}".format(i, loss.item()))
+
+            if i % 500 == 0:
+                # normalize result
+                # result /= torch.sum(result)
+                # visualization.visualize_optim_result(ggx_ref, result)
+                logger.info(f"saving model")
+                save_model(model, "./model/" + model_name)
+                # logger.info(f"[it{i}]Loss: {mean_error.item()}")
+    else:
+        for i in range(n_epoch):
+            optimizer.step(closure)
+            logger.info("[it{}]:loss is{}".format(i, final_loss))
+            if i % 500 == 0:
+                logger.info(f"saving model")
+                save_model(model, "./model/" + model_name)
 
 
     logger.info(f"MAX n_iter {n_epoch} reached")
@@ -1134,11 +1270,14 @@ def test_vectorized_multiple_opt(ggx_alpha):
 
 
 if __name__ == "__main__":
+    n_sample_per_level, mipmap_level_to_compute, flag_constant, flag_adjust_level, optimizer_string =  process_cmd()
+
     #verify_push_back()
     import specular
     info = specular.cubemap_level_params(18)
 
-    ggx_alpha = info[4].roughness
+    ggx_alpha = info[mipmap_level_to_compute].roughness
+    print("Computing GGX alpha {}, using {} directions.\nAdjust Level with Jacobian:{}\nUsing constant params:{}\nOptimizer:{}".format(ggx_alpha,n_sample_per_level,flag_adjust_level,flag_constant,optimizer_string))
 
     #test_vectorized_multiple_opt(ggx_alpha)
 
@@ -1152,7 +1291,7 @@ if __name__ == "__main__":
 
     #t = create_downsample_pattern(130)
     #t = torch_uv_to_xyz_vectorized(t,0)
-    optimize_multiple_locations(80,False,8, ggx_alpha, adjust_level=True, cuda_stream=False,vectorize=True)
+    optimize_multiple_locations(80,flag_constant,8, ggx_alpha, adjust_level=flag_adjust_level, cuda_stream=False,vectorize=True, optimizer_type=optimizer_string)
     #optimize_function()
 
     # dummy location

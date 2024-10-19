@@ -642,7 +642,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
         optimizer = optim.Adam(model.parameters(), lr=1e-4)
     elif optimizer_type == "bfgs":
         #optimizer = optim.LBFGS(model.parameters(), lr = 0.7, line_search_fn="strong_wolfe", max_iter = 50, tolerance_grad = 1e-8, tolerance_change = 1e-10)
-        optimizer = FullBatchLBFGS(model.parameters(), lr = 0.7, history_size=120,line_search="wolfe")
+        optimizer = FullBatchLBFGS(model.parameters(), lr = 0.7, history_size=120,line_search="Wolfe")
     else:
         raise ValueError("Unknown optimizer type")
     n_epoch = 1000000
@@ -681,8 +681,8 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             tmp = torch.stack(error_list)
             mean_error = tmp.mean()
 
-
-        mean_error.backward()
+        #If we are using the LBFGS from github. Thenwe should not call backward
+        #mean_error.backward()
         return mean_error
 
 

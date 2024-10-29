@@ -580,16 +580,16 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
     mipmaps = reference.get_synthetic_mipmap(np.array([0,0,1]),128)
 
-    ref_list = []
+    ref_list_global = []
     if not random_shuffle:
         for i in range(n_sample_per_level):
             location = all_locations[i,:]
             ggx_ref = compute_ggx_distribution_reference(128, ggx_alpha, location)
             ggx_ref = torch.from_numpy(ggx_ref).to(device)
             ggx_ref /= torch.sum(ggx_ref)
-            ref_list.append(ggx_ref)
+            ref_list_global.append(ggx_ref)
         if vectorize:
-            ref_list = torch.stack(ref_list)
+            ref_list_global = torch.stack(ref_list_global)
 
         all_locations = torch.from_numpy(all_locations).to(device)
 
@@ -601,7 +601,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
         tex_directions_res = np.tile(tex_directions_res, (n_sample_per_level, 1, 1, 1, 1))
         tex_directions_res = torch.from_numpy(tex_directions_res).to(device)
 
-    weight_per_frame,xyz_per_frame,theta_phi_per_frame = precompute_opt_info(all_locations, n_sample_per_level)
+    weight_per_frame_global,xyz_per_frame_global,theta_phi_per_frame_global = precompute_opt_info(all_locations, n_sample_per_level)
 
     if optimizer_type == "adam":
         optimizer = optim.Adam(model.parameters(), lr=1e-4)
@@ -629,7 +629,9 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             ref_list = compute_ggx_distribution_reference_torch_vectorized(128,ggx_alpha,all_locations,tex_directions_res)
             ref_list = ref_list.reshape(ref_list.shape + (1,))
             ref_list = ref_list / torch.sum(ref_list,dim=(1,2,3,4),keepdim=True)
-
+        else:
+            ref_list = ref_list_global
+            weight_per_frame, xyz_per_frame, theta_phi_per_frame = weight_per_frame_global, xyz_per_frame_global, theta_phi_per_frame_global
         if vectorize:
             tmp_pushed_back_result = test_multiple_texel_full_optimization_vectorized(n_sample_per_frame,
                                                                                   n_sample_per_level, ref_list,

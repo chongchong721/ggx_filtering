@@ -902,8 +902,8 @@ def compute_contribution(location, level, initial_weight, n_level):
 def random_dir_sphere(uv = None, n_dir = 1):
     if uv is None:
         g = torch.Generator()
-        u = torch.rand(n_dir,generator=g)
-        v = torch.rand(n_dir,generator=g)
+        u = torch.rand(n_dir,generator=g, device = device)
+        v = torch.rand(n_dir,generator=g, device = device)
     else:
         assert uv.shape[1] == 2 and uv.shape[0] == n_dir
         u = uv[:, 0]
@@ -947,6 +947,6 @@ def sample_location(n_sample_per_level, g = None):
     """
     if g is None:
         g = torch.Generator()
-    uv = torch.rand((n_sample_per_level,2),generator=g)
+    uv = torch.rand((n_sample_per_level,2),generator=g,device=device)
     xyz = random_dir_cube(uv, n_sample_per_level)
     return xyz

@@ -560,7 +560,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
         dir_name = map_util.dir_filename(ggx_alpha, constant, n_sample_per_level, adjust_level, optimizer_type, allow_neg_weight=allow_neg_weight)
         torch.save(torch.from_numpy(all_locations), dir_name)
     else:
-        rng = torch.Generator()
+        rng = torch.Generator(device=device)
         rng.manual_seed(12345)
         all_locations = torch_util.sample_location(n_sample_per_level,rng)
 

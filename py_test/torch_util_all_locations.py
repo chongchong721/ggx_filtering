@@ -1,5 +1,4 @@
 import torch
-from filter import frame_axis_index
 from interpolation import get_edge_information
 import numpy as np
 import torch_util

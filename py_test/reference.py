@@ -1,6 +1,5 @@
 import numpy as np
 import material
-from filter import texel_directions
 import image_read
 import specular
 import map_util
@@ -11,6 +10,10 @@ import multiprocessing
 from tqdm import tqdm
 import numba
 
+import interpolation
+
+
+import torch
 """
 Compute the reference \int l(h)d(h)dh by numerically integrate every texel we have
 """
@@ -61,6 +64,14 @@ def loop_compute(normal_direction,normalized_xyz_input,j_weighted_input,alpha,de
     return integral
 
 
+def loop_compute_nojit(normal_direction,normalized_xyz_input,j_weighted_input,alpha,delta_s):
+    cosine = np.dot(normalized_xyz_input, normal_direction)
+    ndf = ndf_isotropic(alpha,cosine)
+    integral_sum = np.stack((ndf, ndf, ndf), axis=-1) * j_weighted_input
+    integral = np.sum(integral_sum, axis=0) * delta_s
+    return integral
+
+
 def outer_loop(normalized_xyz_output,normalized_xyz_input,j_weighted_input,alpha,delta_s,result,ref_res):
     for face_idx in range(6):
         for i in range(ref_res):
@@ -98,8 +109,8 @@ def compute_reference(input_map, cubemap_res, ref_res, GGX_alpha, save_file_name
     int_result = np.zeros((6,ref_res,ref_res,input_map.shape[-1]))
 
     # generate xyz for each face
-    xyz_output = texel_directions(ref_res)
-    xyz_input = texel_directions(cubemap_res)
+    xyz_output = map_util.texel_directions(ref_res)
+    xyz_input = map_util.texel_directions(cubemap_res)
     #integral area
     delta_s = 4.0 / cubemap_res / cubemap_res
 
@@ -125,7 +136,9 @@ def compute_reference(input_map, cubemap_res, ref_res, GGX_alpha, save_file_name
                     # Now, compute ndf for each direction, using input
 
                     # The computation of cosine requires all normalized vectors
-                    integral = loop_compute(normal_direction,normalized_xyz_input_tmp,j_weighted_input_tmp,GGX_alpha,delta_s)
+                    #integral = loop_compute(normal_direction,normalized_xyz_input_tmp,j_weighted_input_tmp,GGX_alpha,delta_s)
+                    integral = loop_compute_nojit(normal_direction, normalized_xyz_input_tmp, j_weighted_input_tmp, GGX_alpha,
+                                            delta_s)
                     # cosine = np.dot(normalized_xyz_input,normal_direction)
                     # ndf = GGX.ndf_isotropic(cosine)
                     #
@@ -142,6 +155,33 @@ def compute_reference(input_map, cubemap_res, ref_res, GGX_alpha, save_file_name
     return int_result
 
 
+def ndf_isotropic_torch_vectorized(alpha, cos_theta):
+    """
+    Only cosine(theta) is needed in isotropic case
+    :param cosine theta: computed directly from vector dot product
+    :return:
+    """
+    a_pow_of2 = alpha ** 2
+    ndf = a_pow_of2 / (np.pi * torch.pow(cos_theta * cos_theta * (a_pow_of2-1) + 1,2))
+    ndf = torch.where(cos_theta > 0.0, ndf, 0.0)
+    return ndf
+
+
+
+
+def compute_ggx_distribution_reference_torch_vectorized(res,ggx_alpha,normal_directions, directions):
+    """
+    :param res:
+    :param ggx_alpha:
+    :param normal_directions: in shape of [N,3]
+    :param directions: texel directions(pregen) in shape of [n_sample_per_level,6,res,res,3]?
+    :return:
+    """
+    normal_direction_normalized = normal_directions / torch.linalg.norm(normal_directions,dim = -1, keepdim = True)
+    cosine = torch.einsum('bl,bijkl->bijk', normal_direction_normalized, directions)
+    ndf = ndf_isotropic_torch_vectorized(ggx_alpha,cosine)
+    return ndf
+
 
 
 def compute_ggx_distribution_reference(res,ggx_alpha,normal_direction):
@@ -155,13 +195,55 @@ def compute_ggx_distribution_reference(res,ggx_alpha,normal_direction):
     ggx = material.GGX(ggx_alpha,ggx_alpha)
     assert normal_direction.size == 3
     normal_direction_normalized = normal_direction / np.linalg.norm(normal_direction)
-    directions = texel_directions(res)
+    directions = map_util.texel_directions(res)
     directions = mat_util.normalized(directions,axis=-1)
 
     cosine = np.dot(directions,normal_direction_normalized.flatten())
     ndf = ggx.ndf_isotropic(cosine)
 
     return ndf.reshape(ndf.shape+(1,))
+
+
+
+def synthetic_onepoint_input(direction,res,value=100.0):
+    array = np.zeros((6,res,res,3))
+    uv,face = map_util.xyz_to_uv(direction)
+    u,v = uv
+    u_idx = int(u / (1 / res))
+    v_idx = int(v / (1 / res))
+
+    v_idx_top = v_idx + 1
+    u_idx_right = u_idx + 1
+
+
+
+    u_loc_right = u_idx_right * (1 / res)
+    v_loc_top = v_idx_top * (1 / res)
+    u_loc_left = u_idx * (1 / res)
+    v_loc_bot = v_idx * (1 / res)
+
+    distance = u_loc_right - u_loc_left
+
+    v_arr_idx_bot = (res - 1) - v_idx
+    v_arr_idx_top = (res - 1) - v_idx_top
+
+    p_top_left = value * (u_loc_right - u) / distance * (v - v_loc_bot) / distance
+    p_top_right = value * (u - u_loc_left) / distance * (v - v_loc_bot) / distance
+    p_bot_left = value * (u_loc_right - u) / distance * (v_loc_top - v) / distance
+    p_bot_right = value * (u - u_loc_left)  / distance * (v_loc_top - v) / distance
+
+    array[face,v_arr_idx_top , u_idx] = p_top_left
+    array[face,v_arr_idx_top , u_idx_right] = p_top_right
+    array[face,v_arr_idx_bot , u_idx] = p_bot_left
+    array[face,v_arr_idx_bot , u_idx_right] = p_bot_right
+
+    return array
+
+def get_synthetic_mipmap(direction,res):
+    mipmap_l0 = synthetic_onepoint_input(direction, res)
+    mipmaps = interpolation.downsample_full(mipmap_l0,7)
+    return mipmaps
+
 
 
 
@@ -175,8 +257,16 @@ def generate_custom_reference(file_name, high_res, ggx_alpha, ref_res):
 
 
 if __name__ == '__main__':
+    u=0.8
+    v=0.2
+    direction = map_util.uv_to_xyz((u,v),4)
+    #synthetic_onepoint_input(direction,128)
 
-    generate_custom_reference("08-21_Swiss_A.hdr",128,0.1,16)
+
+    info = specular.cubemap_level_params(18)
+
+
+    generate_custom_reference("08-21_Swiss_A.hdr",128,info[4].roughness,8)
 
     #test(128)
 

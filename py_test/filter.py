@@ -7,11 +7,17 @@ from random import sample
 
 import numpy as np
 import map_util
+from map_util import gen_frame_weight,gen_frame_xyz,gen_theta_phi
 import mat_util
 import coefficient
 import interpolation
 import image_read
 from tqdm import tqdm
+
+import reference
+from torch_util import SimpleModel, ConstantModel
+import os
+import torch
 
 
 def gen_tex_levels(n_level,n_high_res):
@@ -23,146 +29,14 @@ def gen_tex_levels(n_level,n_high_res):
         cur_res = n_high_res / 2
 
 
-def gen_face_uv(n_res):
-    uv_table = np.zeros((n_res,n_res,2))
-    uv_ascending_order = map_util.create_pixel_index(n_res,1)
-    uv_ascending_order /= n_res
-    # yv for u, xv for v
-    xv, yv = np.meshgrid(np.flip(uv_ascending_order),uv_ascending_order,indexing='ij')
-    uv_table[:,:,0] = yv
-    uv_table[:,:,1] = xv
-    return uv_table
-
-
-def frame_axis_index(frame_idx, paper = False):
-    """
-    There are three frames, the first one consider x the up-axis. the second one consider y the up-axis
-    the third one consider z the up-axis.
-    Note: all system should use the same convention, we choose right-hand here
-    :param frame_idx: the index of the frame. 0 means x as up, 1 means y as up, 2 means z as up
-    :param paper: whether to follow what the code provided by the author does, there is a mismatch in axis index
-    :return:
-    """
-    if not paper:
-        # the original z-axis in a traditional coordinate system
-        up_axis = [0,1,2]
-        # the original x-axis in a traditional coordinate system
-        other_axis0 = [1,2,0]
-        # the original y-axis in a traditional coordinate system
-        other_axis1 = [2,0,1]
-    else:
-        up_axis = [0,1,2]
-        other_axis0 = [1,0,0]
-        other_axis1 = [2,2,1]
-
-    return other_axis0[frame_idx],other_axis1[frame_idx],up_axis[frame_idx]
-
-
-def texel_directions(n_res):
-    """
-    Generate a (6,n_res,n_res,3) xyz direction table for a given level of cubemap(no coordinate system change)
-    :param faces:
-    :param n_res:
-    :return:
-    """
-    face_uv = gen_face_uv(n_res)
-    faces_xyz = np.zeros((6,n_res,n_res,3))
-    for face_idx in range(6):
-        face_xyz = map_util.uv_to_xyz_vectorized(face_uv, face_idx,False)
-        faces_xyz[face_idx] = face_xyz
-    return faces_xyz
-
-
-def normalized(a, axis=-1, order=2):
-    # https://stackoverflow.com/a/21032099
-    l2 = np.atleast_1d(np.linalg.norm(a, order, axis))
-    l2[l2==0] = 1
-    return a / np.expand_dims(l2, axis)
-
-
-
-def gen_frame_xyz(faces_xyz, frame_idx):
-    """
-    The frame xyz is used exclusively in sampling parameters
-    The original direction of the texel is considered the Z axis, we note the normal of this face a
-    The X axis is cross(a,z)  The y axis is cross(Z,X)
-    :param faces_xyz: (6,res,res,3)
-    :param frame_idx: this affects how we construct the up vector
-    :return:
-    """
-    Z = normalized(faces_xyz, axis=-1)
-    polar_axis = np.zeros_like(Z)
-    if frame_idx == 0 or frame_idx == 1 or frame_idx == 2:
-        polar_axis[...,frame_idx] = 1.0
-    else:
-        raise NotImplementedError
-
-    X = normalized(np.cross(polar_axis, Z),axis=-1)
-
-    # This is guaranteed to be unit vector
-    Y = np.cross(Z,X)
-
-    return X,Y,Z
-
-
-def gen_frame_weight(facex_xyz, frame_idx, follow_code = False):
-    """
-    Compute frame weight for each texel according to the paper, the up/bot face have little weight
-    :param facex_xyz:
-    :param frame_idx:
-    :return:
-    """
-    new_x_idx, new_y_idx, new_z_idx = frame_axis_index(frame_idx, follow_code)
-    faces_xyz_abs = np.abs(facex_xyz)
-
-    frame_weight = np.clip(4 * np.maximum(faces_xyz_abs[...,new_x_idx], faces_xyz_abs[...,new_y_idx]) - 3,0.0,1.0)
-
-    return frame_weight
-
-
-def gen_theta_phi(faces_xyz,frame_idx, follow_code = False):
-    """
-    Generate a theta phi table of shape (6,res,res,2) according to the paper
-    :param faces_xyz: original xyz direction for each texel
-    :param frame_idx: the index of the frame, used to determine the new x,y,z axis
-    :return: theta,phi,theta^2,phi^2
-    """
-    new_x_idx, new_y_idx, new_z_idx = frame_axis_index(frame_idx,follow_code)   #write mipmap for preview
-
-    #TODO: Why use abs(z) in original code?
-    nx = faces_xyz[...,new_x_idx]
-    ny = faces_xyz[...,new_y_idx]
-    nz = faces_xyz[...,new_z_idx]
-    max_xy = np.maximum(np.abs(nx),np.abs(ny))
-
-    #normalize nx,ny, in 2/3 of the cases, one of nx and ny should be 1 without normalizing it
-    nx = nx / max_xy
-    ny = ny / max_xy
-
-
-
-    theta = np.zeros_like(nx)
-    theta[(ny < nx) & (ny <= -0.999)] = nx[(ny < nx) & (ny <= -0.999)]
-    theta[(ny < nx) & (ny > -0.999)] = ny[(ny < nx) & (ny > -0.999)]
-    theta[(nx <= ny) & (ny >= 0.999)] = -nx[(nx <= ny) & (ny >= 0.999)]
-    theta[(nx <= ny) & (ny < 0.999)] = -ny[(nx <= ny) & (ny < 0.999)]
-
-
-    phi = np.zeros_like(nx)
-    phi[nz <= -0.999] = -max_xy[nz <= -0.999]
-    phi[nz >= 0.999] = max_xy[nz >= 0.999]
-    phi[(nz > -0.999) & (nz < 0.999)] = nz[(nz > -0.999) & (nz < 0.999)]
-
-    theta2 = theta * theta
-    phi2 = phi * phi
-
-    return theta,phi,theta2,phi2
 
 
 
 
 
-def fetch_samples_python_table(tex_input,output_level, coeff_table, n_sample_per_frame ,follow_code = False, constant = True, j_adjust = True):
+
+
+def fetch_samples_python_table(tex_input,output_level, coeff_table, n_sample_per_frame ,follow_code = False, constant = True, j_adjust = True, allow_neg_weight = False):
     """
     Use the table generated by our python code
     :param tex_input:
@@ -179,7 +53,7 @@ def fetch_samples_python_table(tex_input,output_level, coeff_table, n_sample_per
 
 
     n_res = 128 >> output_level
-    faces_xyz = texel_directions(n_res)
+    faces_xyz = map_util.texel_directions(n_res)
 
     color = np.zeros((6,n_res,n_res,3))
     weight = np.zeros((6,n_res,n_res))
@@ -207,6 +81,12 @@ def fetch_samples_python_table(tex_input,output_level, coeff_table, n_sample_per
 
                 sample_level = coeff_level_table[0] + coeff_level_table[1] * theta2 + coeff_level_table[2] * phi2
                 sample_weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2
+
+                #min_weight = sample_weight.min()
+
+                coeff_x = np.stack((coeff_x, coeff_x, coeff_x), axis=-1)
+                coeff_y = np.stack((coeff_y, coeff_y, coeff_y), axis=-1)
+                coeff_z = np.stack((coeff_z, coeff_z, coeff_z), axis=-1)
             else:
                 coeff_x = coefficient_table[0, coeff_start + sample_idx]
                 coeff_y = coefficient_table[1, coeff_start + sample_idx]
@@ -219,6 +99,8 @@ def fetch_samples_python_table(tex_input,output_level, coeff_table, n_sample_per
                 coeff_z = np.stack((coeff_z, coeff_z, coeff_z), axis=-1)
 
 
+            if not allow_neg_weight:
+                sample_weight = np.clip(sample_weight, 0, a_max=None)
             sample_weight = sample_weight * frame_weight
 
             sample_direction = coeff_x * X + coeff_y * Y + coeff_z * Z
@@ -230,6 +112,8 @@ def fetch_samples_python_table(tex_input,output_level, coeff_table, n_sample_per
                 # adjust level
                 j = 3 / 4 * np.log2(map_util.dot_vectorized_4D(sample_direction_map, sample_direction_map))
                 sample_level += j
+
+            sample_level = np.clip(sample_level, 0, 6)
 
 
             color_tmp = interpolator.interpolate_all(sample_direction_map, sample_level)
@@ -257,7 +141,7 @@ def fetch_samples(tex_input,output_level, follow_code = False):
     n_tap = 8
     n_subtap = 4
     n_res = 128 >> output_level
-    faces_xyz = texel_directions(n_res)
+    faces_xyz = map_util.texel_directions(n_res)
 
     coefficient_dirx = coefficient.fetch_coefficient("quad",output_level,0)
     coefficient_diry = coefficient.fetch_coefficient("quad",output_level,1)
@@ -373,19 +257,115 @@ def torch_model_to_coeff_table(constant:bool,ggx_alpha,n_sample_per_frame,n_mult
 
 
 
-def test_coef(constant:bool,ggx_alpha,n_sample_per_frame,n_multi_loc = None, adjust_level = False):
+
+def synthetic_filter_showcase(params, constant:bool, adjust_level:bool, ggx_alpha, n_sample_per_frame, level_to_test, n_multi_loc, optimize_str, random_shuffle, allow_neg_weight ,mipmaps, name_post_fix = None):
+    """
+
+    :param params: the polynomial/constant param that is already given
+    :param constant:
+    :param l_adjust:
+    :param ggx_alpha:
+    :param n_sample_per_frame:
+    :param level_to_test:
+    :param n_multo_loc:
+    :param optimize_str:
+    :param mipmaps: precomputed mipmaps(downsampled) , this will be called multiple times(should be a synthetic one point mipmap
+    :return:
+    """
+    name = map_util.model_filename(ggx_alpha, constant, n_multi_loc, adjust_level, optimize_str,random_shuffle, allow_neg_weight)
+    img_save_name = "filter_" + name + ("_" + name_post_fix) if name_post_fix is not None else "" + '.exr'
+    ref_res = 128 >> level_to_test
+    result = fetch_samples_python_table(mipmaps, level_to_test, params, n_sample_per_frame, constant=constant, j_adjust=adjust_level, allow_neg_weight=allow_neg_weight)
+    result *= 1000
+    image_read.gen_cubemap_preview_image(result, ref_res, None, "./plots/" + img_save_name)
+
+def test_coef(constant:bool,ggx_alpha,n_sample_per_frame,level_to_test,n_multi_loc = None, adjust_level = False, optimize_str = 'adam'):
+
+    name = map_util.model_filename(ggx_alpha,constant, n_multi_loc, adjust_level, optimize_str)
+
+    if not constant:
+        model = SimpleModel(n_sample_per_frame)
+    else:
+        model = ConstantModel(n_sample_per_frame)
+
+    if os.path.exists("./model/" + name):
+        model.load_state_dict(torch.load("./model/" + name, map_location=torch.device('cpu')))
+    if os.path.exists("../ssh_dir/" + name):
+        model.load_state_dict(torch.load("../ssh_dir/" + name, map_location=torch.device('cpu')))
+
+    params = model()
+    table = params.detach().cpu().numpy()
+
+
+    u,v = 0.5,0.5
+    face = 4
+    direction = map_util.uv_to_xyz((u,v),face)
+
+    mipmap_l0 = reference.synthetic_onepoint_input(direction, high_res)
+    #mipmap_l0 = image_read.envmap_to_cubemap('exr_files/08-21_Swiss_A.hdr',high_res)
+    mipmaps = interpolation.downsample_full(mipmap_l0,n_mipmap_level)
+
+    ref_res = high_res >> level_to_test
+
+    #ref = reference.compute_reference(mipmap_l0,high_res,ref_res,ggx_alpha)
+
+    #result = fetch_samples_python_table(mipmaps,level_to_test,table,8,constant=constant, j_adjust=False)
+
+    result_level_adjust = fetch_samples_python_table(mipmaps,level_to_test,table,8,constant=constant, j_adjust=True)
+
+    result_level_adjust *= 1000
+
+    image_read.gen_cubemap_preview_image(result_level_adjust,ref_res,None, "filter_" + name+'.exr')
+
+
+    #diff_level_adjust = ref - result
+    #diff = ref -result_level_adjust
+
+
+    #image_read.gen_cubemap_preview_image(result,16,filename="filter_ggx0.1_16.exr")
+
+    face = 4
+    u,v = 0.8,0.2
+    location_global = map_util.uv_to_xyz((u, v), face)
+    print(location_global)
+
+
+
+
+
+def test_coef_synthetic(constant:bool,ggx_alpha,n_sample_per_frame,n_multi_loc = None, adjust_level = False):
     import reference
+    import matplotlib.pyplot as plt
     table = torch_model_to_coeff_table(constant,ggx_alpha,n_sample_per_frame,n_multi_loc)
 
-    mipmap_l0 = image_read.envmap_to_cubemap('exr_files/08-21_Swiss_A.hdr',high_res)
+    u,v = 0.8,0.2
+    face = 4
+    direction = map_util.uv_to_xyz((u,v),face)
+
+    mipmap_l0 = reference.synthetic_onepoint_input(direction,high_res)
     mipmaps = interpolation.downsample_full(mipmap_l0,n_mipmap_level)
 
 
-    ref = reference.compute_reference(mipmap_l0,high_res,16,ggx_alpha)
+    #ref = reference.compute_reference(mipmap_l0,high_res,16,ggx_alpha)
+    ref = reference.compute_ggx_distribution_reference(16,0.1,direction)
 
     result = fetch_samples_python_table(mipmaps,3,table,8,constant=constant, j_adjust=False)
 
-    result_level_adjust = fetch_samples_python_table(mipmaps,3,table,8,constant=constant, j_adjust=adjust_level)
+    result_level_adjust = fetch_samples_python_table(mipmaps,3,table,8,constant=constant, j_adjust=True)
+
+    #normalize
+    ref = ref / np.sum(ref)
+    result = result / np.sum(result)
+    result_level_adjust = result_level_adjust / np.sum(result_level_adjust)
+
+    tmpmax = np.max(np.maximum(np.maximum(result,result_level_adjust),ref))
+
+    plt.imshow(ref[4,...,0],vmin=0,vmax=tmpmax)
+    plt.show()
+    plt.imshow(result[4,...,0],vmin=0,vmax=tmpmax)
+    plt.show()
+    plt.imshow(result_level_adjust[4,...,0],vmin=0,vmax=tmpmax)
+    plt.show()
 
     diff_level_adjust = ref - result
     diff = ref -result_level_adjust
@@ -409,15 +389,54 @@ def test_ref_coef_const():
     result = fetch_samples_python_table(mipmaps,3,table[output_level],8,constant=True, j_adjust=False)
     image_read.gen_cubemap_preview_image(result,16,filename="filter_ggx_level3_const_codetable.exr")
 
+
+
+def test_ref_coef(constant:bool, n_sample:int):
+    direction = map_util.uv_to_xyz((0.5,0.5),4)
+
+    param_table = coefficient.get_coeff_table(constant,n_sample)
+    mipmap_l0 = reference.synthetic_onepoint_input(direction, high_res)
+    #mipmap_l0 = image_read.envmap_to_cubemap('exr_files/08-21_Swiss_A.hdr',high_res)
+    mipmaps = interpolation.downsample_full(mipmap_l0,n_mipmap_level)
+
+    level_to_test = 1
+
+    ref_res = high_res >> level_to_test
+
+    #ref = reference.compute_reference(mipmap_l0,high_res,ref_res,ggx_alpha)
+
+    #result = fetch_samples_python_table(mipmaps,level_to_test,table,8,constant=constant, j_adjust=False)
+
+    result_level_adjust = fetch_samples_python_table(mipmaps,level_to_test,param_table[level_to_test],n_sample,constant=constant, j_adjust=True)
+
+    print("Done")
+
+
+
+def fetch_synthetic(direction,res):
+    from reference import synthetic_onepoint_input
+
+    mipmap_l0 = synthetic_onepoint_input(direction,res)
+    mipmaps = interpolation.downsample_full(mipmap_l0,n_mipmap_level,j_inv=False)
+
+
+
+
 if __name__ == '__main__':
     n_mipmap_level = 7
     high_res = 2**n_mipmap_level
+
+    test_ref_coef(False,32)
+
+    import specular
+    info = specular.cubemap_level_params(18)
 
     level_jacobian = True
 
     #test_ref_coef_const()
 
-    test_coef(True,0.1,8, None, level_jacobian)
+    #test_coef(False,info[4].roughness,8, info[4].level,80, level_jacobian,"adam")
+    test_coef(False, 0.100, 8, 3, 200, level_jacobian, "adam")
 
     j_inverse = False
     code_follow = False

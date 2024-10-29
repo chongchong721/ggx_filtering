@@ -1,12 +1,38 @@
 import torch
-from filter import frame_axis_index
 from interpolation import get_edge_information
 import numpy as np
+import map_util
 
 chan_count = 1
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+
+
+class SimpleModel(torch.nn.Module):
+    def __init__(self, n_sample_per_frame):
+        super(SimpleModel, self).__init__()
+        self.params = torch.nn.Parameter(torch.rand((5,3,3*n_sample_per_frame)), requires_grad=True)
+
+    def forward(self):
+        return self.params
+
+
+class ConstantModel(torch.nn.Module):
+    def __init__(self, n_sample_per_frame):
+        super(ConstantModel, self).__init__()
+        self.params = torch.nn.Parameter(torch.concatenate(
+            (torch.rand((2, 3 * n_sample_per_frame)) / 30.0,
+             torch.ones((1,3 * n_sample_per_frame)) - 0.01,
+             (torch.rand((2, 3 * n_sample_per_frame)) + 1) / 2.0,
+             )
+        ) , requires_grad=True)
+    def forward(self):
+        return self.params
+
+
 
 
 def level_to_res(level, n_level):
@@ -153,7 +179,7 @@ def torch_gen_frame_weight(facex_xyz, frame_idx, follow_code = False):
     :param frame_idx:
     :return:
     """
-    new_x_idx, new_y_idx, new_z_idx = frame_axis_index(frame_idx, follow_code)
+    new_x_idx, new_y_idx, new_z_idx = map_util.frame_axis_index(frame_idx, follow_code)
     faces_xyz_abs = torch.abs(facex_xyz)
 
     frame_weight = torch.clip(4 * torch.maximum(faces_xyz_abs[...,new_x_idx], faces_xyz_abs[...,new_y_idx]) - 3,0.0,1.0)
@@ -168,7 +194,7 @@ def torch_gen_theta_phi(faces_xyz,frame_idx, follow_code = False):
     :param frame_idx: the index of the frame, used to determine the new x,y,z axis
     :return: theta,phi,theta^2,phi^2
     """
-    new_x_idx, new_y_idx, new_z_idx = frame_axis_index(frame_idx,follow_code)   #write mipmap for preview
+    new_x_idx, new_y_idx, new_z_idx = map_util.frame_axis_index(frame_idx,follow_code)   #write mipmap for preview
 
     #TODO: Why use abs(z) in original code?
     nx = faces_xyz[...,new_x_idx]
@@ -707,6 +733,9 @@ def push_back(mipmaps):
     TODO:do the above, current method is wrong
 
 
+    Note that, the Jacobian here is at the 3/4 location!
+
+
 
     push all lower level values to the higher level
     :param mipmaps: a mipmap that is initialized to zero(if push back func is not called, all weight is zero)
@@ -867,3 +896,57 @@ def compute_contribution(location, level, initial_weight, n_level):
     result = push_back(bilinear_samples)
 
     return result
+
+
+
+def random_dir_sphere(uv = None, n_dir = 1):
+    if uv is None:
+        g = torch.Generator()
+        u = torch.rand(n_dir,generator=g)
+        v = torch.rand(n_dir,generator=g)
+    else:
+        assert uv.shape[1] == 2 and uv.shape[0] == n_dir
+        u = uv[:, 0]
+        v = uv[:, 1]
+
+    #uniformly sample direction from a sphere
+    phi = u * 2 * np.pi
+    v *= 2
+    v -= 1
+    cos_theta = v
+    sin_theta = torch.sqrt(1 - cos_theta * cos_theta)
+
+    x = torch.cos(phi) * sin_theta
+    y = torch.sin(phi) * sin_theta
+    z = cos_theta
+
+    return torch.stack((x, y, z), dim=1)
+
+
+
+def dir_to_cube_coordinate(xyz):
+    max = torch.max(torch.abs(xyz),dim=-1).values
+    max_stack = torch.stack((max,max,max),dim=-1)
+    return xyz/max_stack
+
+
+def random_dir_cube(uv = None, n_dir = 1):
+    xyz = random_dir_sphere(uv,n_dir)
+    xyz_cube = dir_to_cube_coordinate(xyz)
+    return xyz_cube
+
+
+
+def sample_location(n_sample_per_level, g = None):
+    """
+    Generate directions for optimization
+    Since we can not afford computing error for all direction, we need to sample a few texel directions
+    :param n_sample_per_level:
+    :param rng:
+    :return:
+    """
+    if g is None:
+        g = torch.Generator()
+    uv = torch.rand((n_sample_per_level,2),generator=g)
+    xyz = random_dir_cube(uv, n_sample_per_level)
+    return xyz

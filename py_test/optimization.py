@@ -2,7 +2,7 @@ import numpy as np
 import map_util
 import mat_util
 from datetime import datetime
-from filter import gen_frame_xyz,gen_frame_weight,texel_directions,frame_axis_index,gen_theta_phi
+from map_util import gen_frame_xyz,gen_frame_weight,frame_axis_index,gen_theta_phi
 from interpolation import gen_extended_uv_table,get_edge_information
 from reference import compute_ggx_distribution_reference
 
@@ -724,9 +724,9 @@ if __name__ == "__main__":
     # #BFGS optimization test
     # #test_optimize(0.01,128,location_global[0:1,:],8)
     #
-    # ggx = compute_ggx_distribution_reference(128,0.01,location_global[0:1,:])
+    ggx = compute_ggx_distribution_reference(128,0.1,location_global[0:1,:])
     # #
-    # test_one_texel_full_optimization(location_global[0:1,:],8,ggx)
+    test_one_texel_full_optimization(location_global[0:1,:],8,ggx)
 
 
 

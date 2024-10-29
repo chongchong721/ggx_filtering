@@ -443,6 +443,215 @@ def is_level(ggx_alpha,texel_direction):
     pass
 
 
+def gen_face_uv(n_res):
+    uv_table = np.zeros((n_res,n_res,2))
+    uv_ascending_order = create_pixel_index(n_res,1)
+    uv_ascending_order /= n_res
+    # yv for u, xv for v
+    xv, yv = np.meshgrid(np.flip(uv_ascending_order),uv_ascending_order,indexing='ij')
+    uv_table[:,:,0] = yv
+    uv_table[:,:,1] = xv
+    return uv_table
+
+
+def texel_directions(n_res):
+    """
+    Generate a (6,n_res,n_res,3) xyz direction table for a given level of cubemap(no coordinate system change)
+    :param faces:
+    :param n_res:
+    :return:
+    """
+    face_uv = gen_face_uv(n_res)
+    faces_xyz = np.zeros((6,n_res,n_res,3))
+    for face_idx in range(6):
+        face_xyz = uv_to_xyz_vectorized(face_uv, face_idx,False)
+        faces_xyz[face_idx] = face_xyz
+    return faces_xyz
+
+
+def normalized(a, axis=-1, order=2):
+    # https://stackoverflow.com/a/21032099
+    l2 = np.atleast_1d(np.linalg.norm(a, order, axis))
+    l2[l2==0] = 1
+    return a / np.expand_dims(l2, axis)
+
+
+def frame_axis_index(frame_idx, paper = False):
+    """
+    There are three frames, the first one consider x the up-axis. the second one consider y the up-axis
+    the third one consider z the up-axis.
+    Note: all system should use the same convention, we choose right-hand here
+    :param frame_idx: the index of the frame. 0 means x as up, 1 means y as up, 2 means z as up
+    :param paper: whether to follow what the code provided by the author does, there is a mismatch in axis index
+    :return:
+    """
+    if not paper:
+        # the original z-axis in a traditional coordinate system
+        up_axis = [0,1,2]
+        # the original x-axis in a traditional coordinate system
+        other_axis0 = [1,2,0]
+        # the original y-axis in a traditional coordinate system
+        other_axis1 = [2,0,1]
+    else:
+        up_axis = [0,1,2]
+        other_axis0 = [1,0,0]
+        other_axis1 = [2,2,1]
+
+    return other_axis0[frame_idx],other_axis1[frame_idx],up_axis[frame_idx]
+
+
+
+def gen_frame_xyz(faces_xyz, frame_idx):
+    """
+    The frame xyz is used exclusively in sampling parameters
+    The original direction of the texel is considered the Z axis, we note the normal of this face a
+    The X axis is cross(a,z)  The y axis is cross(Z,X)
+    :param faces_xyz: (6,res,res,3)
+    :param frame_idx: this affects how we construct the up vector
+    :return:
+    """
+    Z = normalized(faces_xyz, axis=-1)
+    polar_axis = np.zeros_like(Z)
+    if frame_idx == 0 or frame_idx == 1 or frame_idx == 2:
+        polar_axis[...,frame_idx] = 1.0
+    else:
+        raise NotImplementedError
+
+    X = normalized(np.cross(polar_axis, Z),axis=-1)
+
+    # This is guaranteed to be unit vector
+    Y = np.cross(Z,X)
+
+    return X,Y,Z
+
+
+def gen_frame_weight(facex_xyz, frame_idx, follow_code = False):
+    """
+    Compute frame weight for each texel according to the paper, the up/bot face have little weight
+    :param facex_xyz:
+    :param frame_idx:
+    :return:
+    """
+    new_x_idx, new_y_idx, new_z_idx = frame_axis_index(frame_idx, follow_code)
+    faces_xyz_abs = np.abs(facex_xyz)
+
+    frame_weight = np.clip(4 * np.maximum(faces_xyz_abs[...,new_x_idx], faces_xyz_abs[...,new_y_idx]) - 3,0.0,1.0)
+
+    return frame_weight
+
+
+def gen_theta_phi(faces_xyz,frame_idx, follow_code = False):
+    """
+    Generate a theta phi table of shape (6,res,res,2) according to the paper
+    :param faces_xyz: original xyz direction for each texel
+    :param frame_idx: the index of the frame, used to determine the new x,y,z axis
+    :return: theta,phi,theta^2,phi^2
+    """
+    new_x_idx, new_y_idx, new_z_idx = frame_axis_index(frame_idx,follow_code)   #write mipmap for preview
+
+    #TODO: Why use abs(z) in original code?
+    nx = faces_xyz[...,new_x_idx]
+    ny = faces_xyz[...,new_y_idx]
+    nz = faces_xyz[...,new_z_idx]
+    max_xy = np.maximum(np.abs(nx),np.abs(ny))
+
+    #normalize nx,ny, in 2/3 of the cases, one of nx and ny should be 1 without normalizing it
+    nx = nx / max_xy
+    ny = ny / max_xy
+
+
+
+    theta = np.zeros_like(nx)
+    theta[(ny < nx) & (ny <= -0.999)] = nx[(ny < nx) & (ny <= -0.999)]
+    theta[(ny < nx) & (ny > -0.999)] = ny[(ny < nx) & (ny > -0.999)]
+    theta[(nx <= ny) & (ny >= 0.999)] = -nx[(nx <= ny) & (ny >= 0.999)]
+    theta[(nx <= ny) & (ny < 0.999)] = -ny[(nx <= ny) & (ny < 0.999)]
+
+
+    phi = np.zeros_like(nx)
+    phi[nz <= -0.999] = -max_xy[nz <= -0.999]
+    phi[nz >= 0.999] = max_xy[nz >= 0.999]
+    phi[(nz > -0.999) & (nz < 0.999)] = nz[(nz > -0.999) & (nz < 0.999)]
+
+    theta2 = theta * theta
+    phi2 = phi * phi
+
+    return theta,phi,theta2,phi2
+
+
+
+
+
+def log_filename(ggx_alpha, n_sample_per_level,constant,adjust_level, optim_method:str , random_shuffle = False, allow_neg_weight = False, post_fix_for_dirs = None):
+    log_name = 'optim_info_multi_ggx_' + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+
+    if constant:
+        log_name = log_name + "_constant"
+    else:
+        log_name = log_name + "_quad"
+
+    if adjust_level:
+        log_name = log_name + "_ladj"
+
+    log_name = log_name + "_" + optim_method
+
+    if random_shuffle:
+        log_name = log_name + "_randomdir"
+
+    if allow_neg_weight:
+        log_name = log_name + "_negweight"
+
+    if post_fix_for_dirs is not None:
+        log_name = log_name + "_" + post_fix_for_dirs
+
+    log_name = log_name + '.log'
+
+    return log_name
+
+def dir_filename(ggx_alpha, constant, n_sample_per_level, adjust_level, optim_method:str , allow_neg_weight = False, post_fix_for_dirs = None):
+    if constant:
+        dir_name = "constant_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+    else:
+        dir_name = "quad_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+
+    if adjust_level:
+        dir_name = dir_name + "_ladj"
+
+    dir_name = dir_name + "_" + optim_method
+
+    if allow_neg_weight:
+        dir_name = dir_name + "_negweight"
+
+    dir_name = dir_name + "_dirs"
+    if post_fix_for_dirs is not None:
+        dir_name = dir_name + "_" + post_fix_for_dirs
+    dir_name = dir_name + ".pt"
+
+    return dir_name
+
+def model_filename(ggx_alpha, constant, n_sample_per_level, adjust_level, optim_method:str , random_shuffle = False, allow_neg_weight = False, post_fix_for_dirs = None):
+    if constant:
+        model_name = "constant_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+    else:
+        model_name = "quad_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+
+    if adjust_level:
+        model_name = model_name + "_ladj"
+
+    model_name = model_name + "_" + optim_method
+
+    if random_shuffle:
+        model_name = model_name + "_randomdir"
+
+    if allow_neg_weight:
+        model_name = model_name + "_negweight"
+
+    if post_fix_for_dirs is not None:
+        model_name = model_name + "_" + post_fix_for_dirs
+
+    return model_name
+
+
 
 
 if __name__ == "__main__":

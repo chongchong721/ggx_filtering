@@ -273,7 +273,10 @@ def synthetic_filter_showcase(params, constant:bool, adjust_level:bool, ggx_alph
     :return:
     """
     name = map_util.model_filename(ggx_alpha, constant, n_multi_loc, adjust_level, optimize_str,random_shuffle, allow_neg_weight)
-    img_save_name = "filter_" + name + ("_" + name_post_fix) if name_post_fix is not None else "" + '.exr'
+    if name_post_fix is not None:
+        img_save_name = "filter_" + name + "_" + name_post_fix  + ".exr"
+    else:
+        img_save_name = "filter_" + name + ".exr"
     ref_res = 128 >> level_to_test
     result = fetch_samples_python_table(mipmaps, level_to_test, params, n_sample_per_frame, constant=constant, j_adjust=adjust_level, allow_neg_weight=allow_neg_weight)
     result *= 1000

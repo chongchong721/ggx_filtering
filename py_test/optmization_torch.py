@@ -580,9 +580,8 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
     mipmaps = reference.get_synthetic_mipmap(np.array([0,0,1]),128)
 
-
+    ref_list = []
     if not random_shuffle:
-        ref_list = []
         for i in range(n_sample_per_level):
             location = all_locations[i,:]
             ggx_ref = compute_ggx_distribution_reference(128, ggx_alpha, location)

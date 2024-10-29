@@ -614,7 +614,6 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     n_epoch = 1000000
 
 
-    final_loss_record = [0] #used in BFGS
 
     def closure():
         optimizer.zero_grad()
@@ -644,7 +643,6 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             diff = torch.abs(ref_list - tmp_pushed_back_result)
             diff = torch.sum(diff, dim=[1, 2, 3, 4])
             mean_error = torch.mean(diff)
-            final_loss_record[0] = mean_error.item()
         else:
             error_list, result_list = test_multiple_texel_full_optimization(all_locations, n_sample_per_frame,
                                                                             n_sample_per_level, ref_list,
@@ -665,6 +663,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     if optimizer_type == "adam":
         for i in range(n_epoch):
             loss = closure()
+            loss.backward()
             if not torch.isnan(loss):
                 optimizer.step()
             else:

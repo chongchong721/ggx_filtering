@@ -561,7 +561,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
         torch.save(torch.from_numpy(all_locations), dir_name)
     else:
         rng = torch.Generator(device=device)
-        rng.manual_seed(12345)
+        #rng.manual_seed(12345)
         all_locations = torch_util.sample_location(n_sample_per_level,rng)
 
 
@@ -671,9 +671,9 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                 logger.info("NaN loss detected")
                 logger.info("Current parameters are", model().detach().numpy())
                 pushed_back_result = test_multiple_texel_full_optimization_vectorized(n_sample_per_frame,
-                                                                                      n_sample_per_level, ref_list,
-                                                                                      weight_per_frame, xyz_per_frame,
-                                                                                      theta_phi_per_frame, model(),
+                                                                                      n_sample_per_level, ref_list_global,
+                                                                                      weight_per_frame_global, xyz_per_frame_global,
+                                                                                      theta_phi_per_frame_global, model(),
                                                                                       constant, adjust_level, allow_neg_weight, device)
                 # normalize pushed_back result
                 pushed_back_sum = torch.sum(pushed_back_result, dim=[1, 2, 3, 4], keepdim=True)
@@ -704,9 +704,12 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             if(torch.isnan(obj)):
                 logger.info("NaN loss detected in LBFGS, Save last param and terminate!")
                 save_model(model, "./model/" + model_name + "_nan")
-            if i % 500 == 0:
+            if i % 10 == 0:
                 logger.info(f"saving model")
                 save_model(model, "./model/" + model_name)
+                synthetic_filter_showcase(model().cpu().detach().numpy(), constant, adjust_level, ggx_alpha,
+                                          n_sample_per_frame, 2, n_sample_per_level, optimizer_type, random_shuffle,
+                                          allow_neg_weight, mipmaps, "it" + str(i))
 
 
     logger.info(f"MAX n_iter {n_epoch} reached")

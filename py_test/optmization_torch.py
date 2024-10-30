@@ -267,11 +267,13 @@ def test_multiple_texel_full_optimization_vectorized(n_sample_per_frame, n_sampl
             #TODO: Jacobian?
             if adjust_level:
                 j = 3 / 4 * torch.log2(torch_util.torch_dot_vectorized_2D(sample_direction_map, sample_direction_map))
-                level += j
+                adjusted_level = level + j
+            else:
+                adjusted_level = level
 
-            level = torch.clip(level,0.0,6.0)
+            adjusted_level = torch.clip(adjusted_level,0.0,6.0)
 
-            sample_levels = torch.concatenate((sample_levels, level))
+            sample_levels = torch.concatenate((sample_levels, adjusted_level))
 
 
     result = torch_util_all_locations.compute_contribution_full(sample_directions,sample_levels,sample_weights,sample_idx,n_level=7,n_sample_per_level = n_sample_per_level)

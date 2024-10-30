@@ -282,9 +282,9 @@ def synthetic_filter_showcase(params, constant:bool, adjust_level:bool, ggx_alph
     result *= 1000
     image_read.gen_cubemap_preview_image(result, ref_res, None, "./plots/" + img_save_name)
 
-def test_coef(constant:bool,ggx_alpha,n_sample_per_frame,level_to_test,n_multi_loc = None, adjust_level = False, optimize_str = 'adam'):
+def test_coef(constant:bool,ggx_alpha,n_sample_per_frame,level_to_test,n_multi_loc = None, adjust_level = False, optimize_str = 'adam', random_shuffle = False, allow_neg_weight = False):
 
-    name = map_util.model_filename(ggx_alpha,constant, n_multi_loc, adjust_level, optimize_str)
+    name = map_util.model_filename(ggx_alpha,constant, n_multi_loc, adjust_level, optimize_str, random_shuffle, allow_neg_weight)
 
     if not constant:
         model = SimpleModel(n_sample_per_frame)
@@ -314,7 +314,7 @@ def test_coef(constant:bool,ggx_alpha,n_sample_per_frame,level_to_test,n_multi_l
 
     #result = fetch_samples_python_table(mipmaps,level_to_test,table,8,constant=constant, j_adjust=False)
 
-    result_level_adjust = fetch_samples_python_table(mipmaps,level_to_test,table,8,constant=constant, j_adjust=True)
+    result_level_adjust = fetch_samples_python_table(mipmaps,level_to_test,table,8,constant=constant, j_adjust=adjust_level, allow_neg_weight=allow_neg_weight)
 
     result_level_adjust *= 1000
 
@@ -429,7 +429,7 @@ if __name__ == '__main__':
     n_mipmap_level = 7
     high_res = 2**n_mipmap_level
 
-    test_ref_coef(False,32)
+    #test_ref_coef(False,32)
 
     import specular
     info = specular.cubemap_level_params(18)
@@ -439,7 +439,7 @@ if __name__ == '__main__':
     #test_ref_coef_const()
 
     #test_coef(False,info[4].roughness,8, info[4].level,80, level_jacobian,"adam")
-    test_coef(False, 0.100, 8, 3, 200, level_jacobian, "adam")
+    test_coef(False, 0.100, 8, 3, 1000, level_jacobian, "bfgs", random_shuffle=True,allow_neg_weight=True)
 
     j_inverse = False
     code_follow = False

@@ -14,6 +14,7 @@ import interpolation
 
 
 import torch
+import torch_util
 """
 Compute the reference \int l(h)d(h)dh by numerically integrate every texel we have
 """
@@ -166,6 +167,24 @@ def ndf_isotropic_torch_vectorized(alpha, cos_theta):
     ndf = torch.where(cos_theta > 0.0, ndf, 0.0)
     return ndf
 
+
+
+def compute_view_dependent_ggx_distribution_ref_torch_vectorized(ggx_alpha, normal_directions, directions, view_direction):
+    """
+    :param ggx_alpha:
+    :param normal_directions: in shape of [N,3]
+    :param directions: texel directions(pregen) in shape of [n_sample_per_level,6,res,res,3]?
+    :param view_direction: the view direction
+    :return:
+
+    When computing view dependent reference, directions can be thought as the light direction. Given n, we can compute
+    the h for each texel, and we can get the NDF of h for each direction
+    """
+    normal_direction_normalized = normal_directions / torch.linalg.norm(normal_directions, dim=-1, keepdim=True)
+    half_vec = torch_util.get_half_vector_torch_vectorized(view_direction,directions)
+    cosine = torch.einsum('bl,bijkl->bijk', normal_direction_normalized, half_vec)
+    ndf = ndf_isotropic_torch_vectorized(ggx_alpha,cosine)
+    return ndf
 
 
 

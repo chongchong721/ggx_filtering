@@ -582,13 +582,13 @@ def gen_theta_phi(faces_xyz,frame_idx, follow_code = False):
 
 
 
-def log_filename(ggx_alpha, n_sample_per_level,constant,adjust_level, optim_method:str , random_shuffle = False, allow_neg_weight = False, post_fix_for_dirs = None):
+def log_filename(ggx_alpha, n_sample_per_frame ,n_sample_per_level,constant,adjust_level, optim_method:str , random_shuffle = False, allow_neg_weight = False, post_fix_for_dirs = None):
     log_name = 'optim_info_multi_ggx_' + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
 
     if constant:
-        log_name = log_name + "_constant"
+        log_name = log_name + "_constant" + str(n_sample_per_frame)
     else:
-        log_name = log_name + "_quad"
+        log_name = log_name + "_quad" + str(n_sample_per_frame)
 
     if adjust_level:
         log_name = log_name + "_ladj"
@@ -608,11 +608,11 @@ def log_filename(ggx_alpha, n_sample_per_level,constant,adjust_level, optim_meth
 
     return log_name
 
-def dir_filename(ggx_alpha, constant, n_sample_per_level, adjust_level, optim_method:str , allow_neg_weight = False, post_fix_for_dirs = None):
+def dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optim_method:str , allow_neg_weight = False, post_fix_for_dirs = None):
     if constant:
-        dir_name = "constant_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+        dir_name = "constant"+ str(n_sample_per_frame)  + "_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
     else:
-        dir_name = "quad_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+        dir_name = "quad"+ str(n_sample_per_frame)  + "_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
 
     if adjust_level:
         dir_name = dir_name + "_ladj"
@@ -629,11 +629,11 @@ def dir_filename(ggx_alpha, constant, n_sample_per_level, adjust_level, optim_me
 
     return dir_name
 
-def model_filename(ggx_alpha, constant, n_sample_per_level, adjust_level, optim_method:str , random_shuffle = False, allow_neg_weight = False, post_fix_for_dirs = None):
+def model_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optim_method:str , random_shuffle = False, allow_neg_weight = False, post_fix_for_dirs = None):
     if constant:
-        model_name = "constant_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+        model_name = "constant"+ str(n_sample_per_frame)  + "_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
     else:
-        model_name = "quad_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
+        model_name = "quad"+ str(n_sample_per_frame)  + "_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
 
     if adjust_level:
         model_name = model_name + "_ladj"

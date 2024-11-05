@@ -272,7 +272,7 @@ def synthetic_filter_showcase(params, constant:bool, adjust_level:bool, ggx_alph
     :param mipmaps: precomputed mipmaps(downsampled) , this will be called multiple times(should be a synthetic one point mipmap
     :return:
     """
-    name = map_util.model_filename(ggx_alpha, constant, n_multi_loc, adjust_level, optimize_str,random_shuffle, allow_neg_weight)
+    name = map_util.model_filename(ggx_alpha, constant, n_sample_per_frame ,n_multi_loc, adjust_level, optimize_str,random_shuffle, allow_neg_weight)
     if name_post_fix is not None:
         img_save_name = "filter_" + name + "_" + name_post_fix  + ".exr"
     else:
@@ -284,7 +284,7 @@ def synthetic_filter_showcase(params, constant:bool, adjust_level:bool, ggx_alph
 
 def test_coef(constant:bool,ggx_alpha,n_sample_per_frame,level_to_test,n_multi_loc = None, adjust_level = False, optimize_str = 'adam', random_shuffle = False, allow_neg_weight = False):
 
-    name = map_util.model_filename(ggx_alpha,constant, n_multi_loc, adjust_level, optimize_str, random_shuffle, allow_neg_weight)
+    name = map_util.model_filename(ggx_alpha,constant, n_sample_per_frame ,n_multi_loc, adjust_level, optimize_str, random_shuffle, allow_neg_weight)
 
     if not constant:
         model = SimpleModel(n_sample_per_frame)
@@ -304,8 +304,8 @@ def test_coef(constant:bool,ggx_alpha,n_sample_per_frame,level_to_test,n_multi_l
     face = 4
     direction = map_util.uv_to_xyz((u,v),face)
 
-    mipmap_l0 = reference.synthetic_onepoint_input(direction, high_res)
-    #mipmap_l0 = image_read.envmap_to_cubemap('exr_files/08-21_Swiss_A.hdr',high_res)
+    #mipmap_l0 = reference.synthetic_onepoint_input(direction, high_res)
+    mipmap_l0 = image_read.envmap_to_cubemap('exr_files/08-21_Swiss_A.hdr',high_res)
     mipmaps = interpolation.downsample_full(mipmap_l0,n_mipmap_level)
 
     ref_res = high_res >> level_to_test
@@ -316,7 +316,7 @@ def test_coef(constant:bool,ggx_alpha,n_sample_per_frame,level_to_test,n_multi_l
 
     result_level_adjust = fetch_samples_python_table(mipmaps,level_to_test,table,8,constant=constant, j_adjust=adjust_level, allow_neg_weight=allow_neg_weight)
 
-    result_level_adjust *= 1000
+    #result_level_adjust *= 1000
 
     image_read.gen_cubemap_preview_image(result_level_adjust,ref_res,None, "filter_" + name+'.exr')
 

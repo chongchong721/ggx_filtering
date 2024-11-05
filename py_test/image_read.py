@@ -303,7 +303,34 @@ def envmap_to_cubemap(path, cubemap_res):
     return cubemap
 
 
+
+def replace_tiff():
+    folder_path = "./plots/quad_0.062_200_randomdir_ladj_adam_randomdir_negweight"
+
+    for filename in os.listdir(folder_path):
+        file_path = os.path.join(folder_path, filename)
+        if file_path[-3:] == 'exr':
+            continue
+        new_path = file_path + "_0.exr"
+        tmp_img = imageio.imread(file_path,format='TIFF')
+        imageio.imwrite(new_path, tmp_img)
+
+
+def rename():
+    folder_path = "./plots/quad_0.062_200_randomdir_ladj_adam_randomdir_negweight"
+    for filename in os.listdir(folder_path):
+        file_path = os.path.join(folder_path, filename)
+        if file_path[-3:] == 'exr':
+            if file_path[-6:-4] == "_0":
+                pass
+            else:
+                new_path = file_path[:-4] + "_1.exr"
+                os.rename(file_path, new_path)
+
+
+
 if __name__ == '__main__':
+    rename()
     #read_exr_image('exr_files/rosendal_plains_2_1k.exr')
     #test_tonemap()
     #gen_cubemap_preview_image(None,512,"tmp.npy")

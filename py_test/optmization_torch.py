@@ -49,6 +49,7 @@ def process_cmd():
     parser.add_argument("-l", "--ggxlevel",type=int)
     parser.add_argument("-n", "--ndir",type=int)
     parser.add_argument("-r", "--ggxalpha", type=float)
+    parser.add_argument("-f","--nsampleframe",type=int)
     parser.add_argument("-s", "--shuffle", type=str2bool,
                         nargs='?',
                         const=True,
@@ -92,11 +93,12 @@ def process_cmd():
     optimizer = optimizer.lower()
     random_shuffle = args.shuffle
     allow_neg_weight = args.negweight
+    n_sample_per_frame = args.nsampleframe
 
     if ggx_alpha_input is not None and ggx_level is not None:
         raise ValueError('ggx_alpha and ggx_level cannot be both specified.')
 
-    return ndir, ggx_level if ggx_level is not None else ggx_alpha_input, constant, adjust_level, optimizer, random_shuffle, allow_neg_weight
+    return n_sample_per_frame,ndir, ggx_level if ggx_level is not None else ggx_alpha_input, constant, adjust_level, optimizer, random_shuffle, allow_neg_weight
 
 
 
@@ -179,6 +181,116 @@ def error_func(x, texel_direction, n_sample_per_frame, ggx_ref, constant= False)
         x = x.reshape((5, n_sample_per_frame * 3))
     error, result = test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_ref, x, constant)
     return error, result
+
+
+def test_multiple_texel_full_optimization_view_dependent_vectorized(n_sample_per_frame, n_sample_per_level ,ggx_ref_list, weight_list, xyz_list, theta_phi_list, view_theta_list ,coef_table=None, adjust_level = False, allow_neg_weight = False ,device = torch.device('cpu')):
+    """
+
+    If we add one more parameter of the cos(theta_d)? or cos(theta_h&n)?, we need more coefficients,
+    do we use different theta in different frames?
+
+    we need two more parameters
+
+    We still want to keep quadratic polynomial, we want to make sure for each view direction, the preimage is symmetric?
+
+    k1 * view_theta * 2 + k2 * view_theta?
+
+    :param n_sample_per_frame:
+    :param n_sample_per_level:
+    :param ggx_ref_list:
+    :param weight_list:
+    :param xyz_list:
+    :param theta_phi_list:
+    :param view_theta_list: view dot n -> in shape of (n_sample_per_level,)
+    :param coef_table:
+    :param constant:
+    :param adjust_level:
+    :param device:
+    :return:
+    """
+    if coef_table is None:
+        # a single coefficient table in shape [5,3,nsample_per_frame * 3]
+        coefficient_table = torch.rand((5, 5, n_sample_per_frame * 3))
+    else:
+        coefficient_table = coef_table
+
+    sample_directions = torch.empty((0, 3), device=device)
+    sample_weights = torch.empty((0,), device=device)
+    sample_levels = torch.empty((0,), device=device)
+    sample_idx = torch.empty((0,), device=device,dtype=torch.int)
+
+
+    for dir_idx in range(n_sample_per_level):
+        for i in range(3):
+            X, Y, Z = xyz_list[i][0][dir_idx],xyz_list[i][1][dir_idx],xyz_list[i][2][dir_idx]
+            theta2, phi2 = theta_phi_list[i][2][dir_idx],theta_phi_list[i][3][dir_idx]
+            frame_weight = weight_list[i][dir_idx]
+
+            view_theta,view_theta2 = view_theta_list[0][dir_idx],view_theta_list[1][dir_idx]
+
+            if frame_weight == 0:
+                continue
+
+            coeff_start = i * n_sample_per_frame
+            coeff_end = coeff_start + n_sample_per_frame
+
+            coeff_x_table = coefficient_table[0, :, coeff_start:coeff_end]
+            coeff_y_table = coefficient_table[1, :, coeff_start:coeff_end]
+            coeff_z_table = coefficient_table[2, :, coeff_start:coeff_end]
+            coeff_level_table = coefficient_table[3, :, coeff_start:coeff_end]
+            coeff_weight_table = coefficient_table[4, :, coeff_start:coeff_end]
+
+            coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2 + coeff_x_table[3] * view_theta + coeff_x_table[4] * view_theta2
+            coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2 + coeff_y_table[3] * view_theta + coeff_y_table[4] * view_theta2
+            coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2 + coeff_z_table[3] * view_theta + coeff_z_table[4] * view_theta2
+
+
+            level = coeff_level_table[0] + coeff_level_table[1] * theta2 + coeff_level_table[2] * phi2 + coeff_level_table[3] * view_theta + coeff_level_table[4] * view_theta2
+            weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2 + coeff_weight_table[3] * view_theta + coeff_weight_table[4] * view_theta2
+
+
+            coeff_x = torch.stack((coeff_x, coeff_x, coeff_x), dim=-1)
+            coeff_y = torch.stack((coeff_y, coeff_y, coeff_y), dim=-1)
+            coeff_z = torch.stack((coeff_z, coeff_z, coeff_z), dim=-1)
+
+
+            sample_direction = coeff_x * X + coeff_y * Y + coeff_z * Z
+            abs_direction = torch.abs(sample_direction)
+            max_dir = torch.max(abs_direction, dim=-1).values
+            sample_direction_map = sample_direction / torch.stack([max_dir, max_dir, max_dir], dim=-1)
+
+            weight_cur_frame = weight * frame_weight
+
+            #TODO: how to make weight/level always positive?
+            # What if we do not clip weight?
+            if not allow_neg_weight:
+                weight_cur_frame = torch.clip(weight_cur_frame, 0)
+
+
+            sample_directions = torch.concatenate((sample_directions, sample_direction_map))
+            sample_weights = torch.concatenate((sample_weights, weight_cur_frame))
+            sample_idx = torch.concatenate((sample_idx, torch.full([n_sample_per_frame],dir_idx,device=device,dtype=torch.int)))
+
+            #TODO: Jacobian?
+            if adjust_level:
+                j = 3 / 4 * torch.log2(torch_util.torch_dot_vectorized_2D(sample_direction_map, sample_direction_map))
+                adjusted_level = level + j
+            else:
+                adjusted_level = level
+
+            adjusted_level = torch.clip(adjusted_level,0.0,6.0)
+
+            sample_levels = torch.concatenate((sample_levels, adjusted_level))
+
+
+    result = torch_util_all_locations.compute_contribution_full(sample_directions,sample_levels,sample_weights,sample_idx,n_level=7,n_sample_per_level = n_sample_per_level)
+
+
+
+
+
+    return result
+
 
 
 
@@ -284,7 +396,7 @@ def test_multiple_texel_full_optimization_vectorized(n_sample_per_frame, n_sampl
 
     return result
 
-def test_multiple_texel_full_optimization(texel_dirs,n_sample_per_frame, n_sample_per_level ,ggx_ref_list, weight_list, xyz_list, theta_phi_list ,coef_table=None, constant= False, adjust_level = False, device = torch.device('cpu')):
+def test_multiple_texel_full_optimization(texel_dirs,n_sample_per_frame, n_sample_per_level ,ggx_ref_list, weight_list, xyz_list, theta_phi_list ,coef_table=None, constant= False, adjust_level = False, allow_neg_weight = False ,device = torch.device('cpu')):
     """
 
     :param texel_dirs:
@@ -360,8 +472,9 @@ def test_multiple_texel_full_optimization(texel_dirs,n_sample_per_frame, n_sampl
             weight_cur_frame = weight * frame_weight
 
             #TODO: how to make weight/level always positive?
-            weight_cur_frame = torch.clip(weight_cur_frame, 0)
-            level = torch.clip(level,0.0,6.0)
+            if not allow_neg_weight:
+                weight_cur_frame = torch.clip(weight_cur_frame, 0)
+
 
             sample_directions = torch.concatenate((sample_directions, sample_direction_map))
             sample_weights = torch.concatenate((sample_weights, weight_cur_frame))
@@ -371,7 +484,9 @@ def test_multiple_texel_full_optimization(texel_dirs,n_sample_per_frame, n_sampl
                 j = 3 / 4 * torch.log2(torch_util.torch_dot_vectorized_2D(sample_direction_map, sample_direction_map))
                 level += j
 
-            sample_levels = torch.concatenate((sample_levels, level))
+            adjust_level = torch.clip(level,0.0,6.0)
+
+            sample_levels = torch.concatenate((sample_levels, adjust_level))
 
         # if dir_idx == 0:
         #     end_time = time.time()
@@ -550,7 +665,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
     logger = logging.getLogger(__name__)
 
-    log_name = map_util.log_filename(ggx_alpha,n_sample_per_level,constant,adjust_level,optimizer_type,random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight)
+    log_name = map_util.log_filename(ggx_alpha,n_sample_per_frame,n_sample_per_level,constant,adjust_level,optimizer_type,random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight)
 
     logging.basicConfig(filename=log_name, filemode='a', level=logging.INFO,
                         format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s', datefmt='%H:%M:%S')
@@ -559,7 +674,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     if not random_shuffle:
         rng = np.random.default_rng(12345)
         all_locations = map_util.sample_location(n_sample_per_level,rng)
-        dir_name = map_util.dir_filename(ggx_alpha, constant, n_sample_per_level, adjust_level, optimizer_type, allow_neg_weight=allow_neg_weight)
+        dir_name = map_util.dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optimizer_type, allow_neg_weight=allow_neg_weight)
         torch.save(torch.from_numpy(all_locations), dir_name)
     else:
         rng = torch.Generator(device=device)
@@ -567,7 +682,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
         all_locations = torch_util.sample_location(n_sample_per_level,rng)
 
 
-    model_name = map_util.model_filename(ggx_alpha,constant,n_sample_per_level,adjust_level,optimizer_type, random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight)
+    model_name = map_util.model_filename(ggx_alpha,constant,n_sample_per_frame,n_sample_per_level,adjust_level,optimizer_type, random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight)
 
     if not constant:
         model = torch_util.SimpleModel(n_sample_per_frame)
@@ -1254,7 +1369,7 @@ def test_vectorized_multiple_opt(ggx_alpha):
 
 
 if __name__ == "__main__":
-    n_sample_per_level, ggx_info, flag_constant, flag_adjust_level, optimizer_string, random_shuffle, allow_neg_weight =  process_cmd()
+    n_sample_per_frame,n_sample_per_level, ggx_info, flag_constant, flag_adjust_level, optimizer_string, random_shuffle, allow_neg_weight =  process_cmd()
     #
     if isinstance(ggx_info, int):
         import specular
@@ -1262,7 +1377,7 @@ if __name__ == "__main__":
         ggx_alpha = info[ggx_info].roughness
     else:
         ggx_alpha = ggx_info
-    print("Computing GGX alpha {}, using {} directions.\nAdjust Level with Jacobian:{}\nUsing constant params:{}\nOptimizer:{}\nrandom shuffle:{}\nAllow negative weight{}".format(ggx_alpha,n_sample_per_level,flag_adjust_level,flag_constant,optimizer_string,random_shuffle,allow_neg_weight))
+    print("Computing GGX alpha {}, using {} directions,{} samples per frame.\nAdjust Level with Jacobian:{}\nUsing constant params:{}\nOptimizer:{}\nrandom shuffle:{}\nAllow negative weight:{}".format(ggx_alpha,n_sample_per_level,n_sample_per_frame,flag_adjust_level,flag_constant,optimizer_string,random_shuffle,allow_neg_weight))
 
     # #test_vectorized_multiple_opt(ggx_alpha)
     #
@@ -1276,7 +1391,7 @@ if __name__ == "__main__":
 
     #t = create_downsample_pattern(130)
     #t = torch_uv_to_xyz_vectorized(t,0)
-    optimize_multiple_locations(n_sample_per_level,flag_constant,8, ggx_alpha, adjust_level=flag_adjust_level,vectorize=True, optimizer_type=optimizer_string, random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight)
+    optimize_multiple_locations(n_sample_per_level,flag_constant,n_sample_per_frame, ggx_alpha, adjust_level=flag_adjust_level,vectorize=True, optimizer_type=optimizer_string, random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight)
     #optimize_function()
 
     # dummy location

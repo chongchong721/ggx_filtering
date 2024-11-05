@@ -59,6 +59,20 @@ def initialize_mipmaps(n_level):
     return mipmaps
 
 
+def get_half_vector_torch_vectorized(v:torch.Tensor,l:torch.Tensor):
+    """
+    :param v: either in the same shape of l or (3,)
+    :param l: in [...,3]
+    :return:
+    """
+    wh = v + l
+    wh = wh / torch.linalg.norm(wh, dim=-1, keepdim=True)
+    return wh
+
+
+
+
+
 def torch_jacobian_vertorized(xyz):
     """
 

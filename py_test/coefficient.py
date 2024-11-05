@@ -1,5 +1,6 @@
 import numpy as np
 
+from torch_util import SimpleModel,ConstantModel
 
 class float4:
     def __init__(self, v0,v1,v2,v3):
@@ -26,6 +27,28 @@ def fetch_coefficient(mode:str,level_idx,parameter_idx):
         return coefficient_quad32[level_idx,parameter_idx]
     else:
         raise NotImplementedError
+
+
+def create_model(const:bool, n_sample_per_frame, n_level):
+    import torch
+    table = get_coeff_table(const,n_sample_per_frame)
+    table_this_level = table[n_level]
+
+    if const:
+        model = ConstantModel(n_sample_per_frame)
+        name = "const" + str(n_sample_per_frame) + "level" + str(n_level)
+    else:
+        model = SimpleModel(n_sample_per_frame)
+        name = "quad" + str(n_sample_per_frame) + "level" + str(n_level)
+
+    with torch.no_grad():
+        model.params.copy_(torch.from_numpy(table_this_level))
+
+
+
+    torch.save(model.state_dict(),'./refs/' + name)
+
+
 
 
 def get_coeff_table(const:bool, n_sample_per_frame):
@@ -96,5 +119,7 @@ if __name__ == "__main__":
     #
     # print(coefficient_const8.shape)
     # print(coefficient_quad32.shape)
+
+    create_model(False,32, 3)
 
     print("Done")

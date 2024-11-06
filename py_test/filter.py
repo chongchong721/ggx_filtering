@@ -258,7 +258,7 @@ def torch_model_to_coeff_table(constant:bool,ggx_alpha,n_sample_per_frame,n_mult
 
 
 
-def synthetic_filter_showcase(params, constant:bool, adjust_level:bool, ggx_alpha, n_sample_per_frame, level_to_test, n_multi_loc, optimize_str, random_shuffle, allow_neg_weight ,mipmaps, name_post_fix = None):
+def synthetic_filter_showcase(params, constant:bool, adjust_level:bool, ggx_alpha, n_sample_per_frame, level_to_test, n_multi_loc, optimize_str, random_shuffle, allow_neg_weight, ggx_ref_jac_weight ,mipmaps, name_post_fix = None):
     """
 
     :param params: the polynomial/constant param that is already given
@@ -272,7 +272,7 @@ def synthetic_filter_showcase(params, constant:bool, adjust_level:bool, ggx_alph
     :param mipmaps: precomputed mipmaps(downsampled) , this will be called multiple times(should be a synthetic one point mipmap
     :return:
     """
-    name = map_util.model_filename(ggx_alpha, constant, n_sample_per_frame ,n_multi_loc, adjust_level, optimize_str,random_shuffle, allow_neg_weight)
+    name = map_util.model_filename(ggx_alpha, constant, n_sample_per_frame ,n_multi_loc, adjust_level, optimize_str,random_shuffle, allow_neg_weight, ggx_ref_jac_weight)
     if name_post_fix is not None:
         img_save_name = "filter_" + name + "_" + name_post_fix  + ".exr"
     else:

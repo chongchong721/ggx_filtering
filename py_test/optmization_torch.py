@@ -81,6 +81,15 @@ def process_cmd():
         default=False,
         help='Enable or disable adjust level mode (True/False).'
     )
+    parser.add_argument(
+        '-j', '--jacref',
+        type=str2bool,
+        nargs='?',
+        const=True,
+        default=False,
+        help='Whether to apply jacobian to reference'
+    )
+
 
     args = parser.parse_args()
 
@@ -94,11 +103,12 @@ def process_cmd():
     random_shuffle = args.shuffle
     allow_neg_weight = args.negweight
     n_sample_per_frame = args.nsampleframe
+    ggx_ref_jac_weight = args.jacref
 
     if ggx_alpha_input is not None and ggx_level is not None:
         raise ValueError('ggx_alpha and ggx_level cannot be both specified.')
 
-    return n_sample_per_frame,ndir, ggx_level if ggx_level is not None else ggx_alpha_input, constant, adjust_level, optimizer, random_shuffle, allow_neg_weight
+    return n_sample_per_frame,ndir, ggx_level if ggx_level is not None else ggx_alpha_input, constant, adjust_level, optimizer, random_shuffle, allow_neg_weight, ggx_ref_jac_weight
 
 
 
@@ -484,9 +494,9 @@ def test_multiple_texel_full_optimization(texel_dirs,n_sample_per_frame, n_sampl
                 j = 3 / 4 * torch.log2(torch_util.torch_dot_vectorized_2D(sample_direction_map, sample_direction_map))
                 level += j
 
-            adjust_level = torch.clip(level,0.0,6.0)
+            adjusted_level = torch.clip(level,0.0,6.0)
 
-            sample_levels = torch.concatenate((sample_levels, adjust_level))
+            sample_levels = torch.concatenate((sample_levels, adjusted_level))
 
         # if dir_idx == 0:
         #     end_time = time.time()
@@ -652,7 +662,7 @@ def precompute_opt_info(texel_directions, n_sample_per_level):
     return weight_per_frame, xyz_per_frame, theta_phi_per_frame
 
 
-def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False, vectorize = True, optimizer_type = "adam", random_shuffle = False, allow_neg_weight = False):
+def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False, vectorize = True, optimizer_type = "adam", random_shuffle = False, allow_neg_weight = False, ggx_ref_jac_weight = False):
     """
     To speed up, a lot of things can be precomputed, including the relative XYZ,the frame weight
     we don't have to compute this in every iteration
@@ -665,7 +675,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
     logger = logging.getLogger(__name__)
 
-    log_name = map_util.log_filename(ggx_alpha,n_sample_per_frame,n_sample_per_level,constant,adjust_level,optimizer_type,random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight)
+    log_name = map_util.log_filename(ggx_alpha,n_sample_per_frame,n_sample_per_level,constant,adjust_level,optimizer_type,random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight, ggx_ref_jac_weight=ggx_ref_jac_weight)
 
     logging.basicConfig(filename=log_name, filemode='a', level=logging.INFO,
                         format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s', datefmt='%H:%M:%S')
@@ -674,7 +684,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     if not random_shuffle:
         rng = np.random.default_rng(12345)
         all_locations = map_util.sample_location(n_sample_per_level,rng)
-        dir_name = map_util.dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optimizer_type, allow_neg_weight=allow_neg_weight)
+        dir_name = map_util.dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optimizer_type, allow_neg_weight=allow_neg_weight, ggx_ref_jac_weight=ggx_ref_jac_weight)
         torch.save(torch.from_numpy(all_locations), dir_name)
     else:
         rng = torch.Generator(device=device)
@@ -682,7 +692,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
         all_locations = torch_util.sample_location(n_sample_per_level,rng)
 
 
-    model_name = map_util.model_filename(ggx_alpha,constant,n_sample_per_frame,n_sample_per_level,adjust_level,optimizer_type, random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight)
+    model_name = map_util.model_filename(ggx_alpha,constant,n_sample_per_frame,n_sample_per_level,adjust_level,optimizer_type, random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight, ggx_ref_jac_weight=ggx_ref_jac_weight)
 
     if not constant:
         model = torch_util.SimpleModel(n_sample_per_frame)
@@ -701,7 +711,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     if not random_shuffle:
         for i in range(n_sample_per_level):
             location = all_locations[i,:]
-            ggx_ref = compute_ggx_distribution_reference(128, ggx_alpha, location)
+            ggx_ref = compute_ggx_distribution_reference(128, ggx_alpha, location, apply_jacobian=ggx_ref_jac_weight)
             ggx_ref = torch.from_numpy(ggx_ref).to(device)
             ggx_ref /= torch.sum(ggx_ref)
             ref_list_global.append(ggx_ref)
@@ -712,10 +722,12 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
     else:
 
-        tex_directions_res = map_util.texel_directions(128).astype(np.float32)
-        tex_directions_res = mat_util.normalized(tex_directions_res)
+        tex_directions_res_map = map_util.texel_directions(128).astype(np.float32)
+        tex_directions_res = mat_util.normalized(tex_directions_res_map)
         # stack this for N times, is this necessary?
+        tex_directions_res_map = np.tile(tex_directions_res_map, (n_sample_per_level, 1, 1, 1, 1))
         tex_directions_res = np.tile(tex_directions_res, (n_sample_per_level, 1, 1, 1, 1))
+        tex_directions_res_map = torch.from_numpy(tex_directions_res_map).to(device)
         tex_directions_res = torch.from_numpy(tex_directions_res).to(device)
 
     weight_per_frame_global,xyz_per_frame_global,theta_phi_per_frame_global = precompute_opt_info(all_locations, n_sample_per_level)
@@ -743,9 +755,22 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             weight_per_frame, xyz_per_frame, theta_phi_per_frame = precompute_opt_info(all_locations,
                                                                                        n_sample_per_level)
             #new reference
-            ref_list = compute_ggx_distribution_reference_torch_vectorized(128,ggx_alpha,all_locations,tex_directions_res)
+            ref_list = compute_ggx_distribution_reference_torch_vectorized(128,ggx_alpha,all_locations,tex_directions_res,tex_directions_res_map,ggx_ref_jac_weight)
             ref_list = ref_list.reshape(ref_list.shape + (1,))
             ref_list = ref_list / torch.sum(ref_list,dim=(1,2,3,4),keepdim=True)
+
+            # ref_list_test = compute_ggx_distribution_reference_torch_vectorized(128, ggx_alpha, all_locations,
+            #                                                                tex_directions_res, tex_directions_res_map,
+            #                                                                False)
+            #
+            # ref_list_test = ref_list_test.reshape(ref_list_test.shape + (1,))
+            # ref_list_test = ref_list_test / torch.sum(ref_list_test,dim=(1,2,3,4),keepdim=True)
+            #
+            # ref_list_diff = ref_list - ref_list_test
+            #
+            # diff = torch.abs(ref_list_diff)
+            # diff = torch.sum(diff,dim=[1,2,3,4])
+            # mean_error = torch.mean(diff)
         else:
             ref_list = ref_list_global
             weight_per_frame, xyz_per_frame, theta_phi_per_frame = weight_per_frame_global, xyz_per_frame_global, theta_phi_per_frame_global
@@ -807,7 +832,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                 logger.info(f"saving model")
                 save_model(model, "./model/" + model_name)
                 # logger.info(f"[it{i}]Loss: {mean_error.item()}")
-                synthetic_filter_showcase(model().cpu().detach().numpy(),constant,adjust_level,ggx_alpha,n_sample_per_frame,2,n_sample_per_level,optimizer_type,random_shuffle,allow_neg_weight,mipmaps,"it" + str(i))
+                synthetic_filter_showcase(model().cpu().detach().numpy(),constant,adjust_level,ggx_alpha,n_sample_per_frame,2,n_sample_per_level,optimizer_type,random_shuffle,allow_neg_weight,ggx_ref_jac_weight,mipmaps,"it" + str(i))
 
 
     else:
@@ -826,7 +851,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                 save_model(model, "./model/" + model_name)
                 synthetic_filter_showcase(model().cpu().detach().numpy(), constant, adjust_level, ggx_alpha,
                                           n_sample_per_frame, 2, n_sample_per_level, optimizer_type, random_shuffle,
-                                          allow_neg_weight, mipmaps, "it" + str(i))
+                                          allow_neg_weight, ggx_ref_jac_weight ,mipmaps, "it" + str(i))
 
 
     logger.info(f"MAX n_iter {n_epoch} reached")
@@ -1369,7 +1394,7 @@ def test_vectorized_multiple_opt(ggx_alpha):
 
 
 if __name__ == "__main__":
-    n_sample_per_frame,n_sample_per_level, ggx_info, flag_constant, flag_adjust_level, optimizer_string, random_shuffle, allow_neg_weight =  process_cmd()
+    n_sample_per_frame,n_sample_per_level, ggx_info, flag_constant, flag_adjust_level, optimizer_string, random_shuffle, allow_neg_weight, ggx_ref_jac_weight =  process_cmd()
     #
     if isinstance(ggx_info, int):
         import specular
@@ -1377,7 +1402,7 @@ if __name__ == "__main__":
         ggx_alpha = info[ggx_info].roughness
     else:
         ggx_alpha = ggx_info
-    print("Computing GGX alpha {}, using {} directions,{} samples per frame.\nAdjust Level with Jacobian:{}\nUsing constant params:{}\nOptimizer:{}\nrandom shuffle:{}\nAllow negative weight:{}".format(ggx_alpha,n_sample_per_level,n_sample_per_frame,flag_adjust_level,flag_constant,optimizer_string,random_shuffle,allow_neg_weight))
+    print("Computing GGX alpha {}, using {} directions,{} samples per frame.\nAdjust Level with Jacobian:{}\nUsing constant params:{}\nOptimizer:{}\nrandom shuffle:{}\nAllow negative weight:{},\nUse Jacobian weighted ggx as reference:{}".format(ggx_alpha,n_sample_per_level,n_sample_per_frame,flag_adjust_level,flag_constant,optimizer_string,random_shuffle,allow_neg_weight, ggx_ref_jac_weight))
 
     # #test_vectorized_multiple_opt(ggx_alpha)
     #
@@ -1391,7 +1416,7 @@ if __name__ == "__main__":
 
     #t = create_downsample_pattern(130)
     #t = torch_uv_to_xyz_vectorized(t,0)
-    optimize_multiple_locations(n_sample_per_level,flag_constant,n_sample_per_frame, ggx_alpha, adjust_level=flag_adjust_level,vectorize=True, optimizer_type=optimizer_string, random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight)
+    optimize_multiple_locations(n_sample_per_level,flag_constant,n_sample_per_frame, ggx_alpha, adjust_level=flag_adjust_level,vectorize=True, optimizer_type=optimizer_string, random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight, ggx_ref_jac_weight=ggx_ref_jac_weight)
     #optimize_function()
 
     # dummy location

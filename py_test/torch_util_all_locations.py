@@ -198,6 +198,7 @@ def process_bilinear_samples_all_locations(trilerp_sample_info: {}, mipmaps: [],
 
     for level_idx in range(n_level):
         cur_res = 2 << (n_level - level_idx - 1)
+        cur_res_inv = 1 / cur_res
         condition = (level == level_idx)
         cur_uv_grid = uv_grid_list[level_idx]
 
@@ -215,12 +216,14 @@ def process_bilinear_samples_all_locations(trilerp_sample_info: {}, mipmaps: [],
             """
             continue
 
-        u_location = torch.searchsorted(cur_uv_ascending_order, cur_u, right=False)  # j in np array order
+        # u_location = torch.searchsorted(cur_uv_ascending_order, cur_u, right=False)  # j in np array order
+        #
+        # v_location_inv = torch.searchsorted(cur_uv_ascending_order, cur_v, right=False)  # -i in np array order
+        # v_location = (cur_res + 2) - 1 - v_location_inv  # extended_res - 1 - v_location   # Visually, this v_location is the upper v(where v has a higher value)
 
-        v_location_inv = torch.searchsorted(cur_uv_ascending_order, cur_v, right=False)  # -i in np array order
-        v_location = (
-                                 cur_res + 2) - 1 - v_location_inv  # extended_res - 1 - v_location   # Visually, this v_location is the upper v(where v has a higher value)
-
+        u_location = torch.ceil((cur_u + 0.5 * cur_res_inv) / cur_res_inv).int()
+        v_location_inv = torch.ceil((cur_v + 0.5 * cur_res_inv) / cur_res_inv).int()
+        v_location = (cur_res + 2) - 1 - v_location_inv
 
         # The following two lines uses uv_grid ordering, where the order of v is inversed
 
@@ -263,7 +266,7 @@ def process_bilinear_samples_all_locations(trilerp_sample_info: {}, mipmaps: [],
 
 
 
-def push_back_all_lcoations(mipmaps):
+def push_back_all_lcoations(mipmaps, j_inv = False):
     n_sample_per_level = mipmaps[0].shape[0]
     for level_idx in reversed(range(len(mipmaps))):
         if level_idx == 0:
@@ -280,7 +283,10 @@ def push_back_all_lcoations(mipmaps):
         xyz_bilerp_upper has a resolution of 2res * 2res, the neighboring 4 are the jacobian used for the bilerp samples
         """
         xyz_bilerp_upper = torch_util.downsample_xyz_pattern_full(extended_upper_res)
-        j = torch_util.torch_jacobian_vertorized(xyz_bilerp_upper)
+        if not j_inv:
+            j = torch_util.torch_jacobian_vertorized(xyz_bilerp_upper)
+        else:
+            j = 1 / torch_util.torch_jacobian_vertorized(xyz_bilerp_upper)
         j_sum = j.view(6, res, 2, res, 2).sum(dim=(2, 4))
 
         j_pattern_upper_left = j[:, 0::2, 0::2]
@@ -394,6 +400,6 @@ def compute_contribution_full(all_locations,all_levels, all_weights, sample_idx,
     zero_map = initialize_mipmaps_all(n_level, n_sample_per_level)
     trilinear_samples = process_trilinear_samples_all_locations(all_locations, all_levels, all_weights, n_level, n_sample_per_level, sample_idx)
     bilinear_samples = process_bilinear_samples_all_locations(trilinear_samples, zero_map, n_sample_per_level)
-    result = push_back_all_lcoations(bilinear_samples)
+    result = push_back_all_lcoations(bilinear_samples,False)
 
     return result

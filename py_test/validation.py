@@ -30,6 +30,7 @@ def check_vectorized():
 
     all_locations = torch.from_numpy(all_locations).to(device)
 
+    params = torch.from_numpy(params).to(device)
 
     weight_per_frame_global, xyz_per_frame_global, theta_phi_per_frame_global = precompute_opt_info(all_locations,
                                                                                                     n_sample_per_level)
@@ -42,4 +43,16 @@ def check_vectorized():
                                                                               device)
 
 
-    loop_pushed_back_result = test_multiple_texel_full_optimization(None,8,n_sample_per_level, ref_list_global, weight_per_frame_global, xyz_per_frame_global,theta_phi_per_frame_global, params,False,True)
+    _,loop_pushed_back_result = test_multiple_texel_full_optimization(None,8,n_sample_per_level, ref_list_global, weight_per_frame_global, xyz_per_frame_global,theta_phi_per_frame_global, params,False,True,True)
+
+    for i in range(n_sample_per_level):
+        test1 = tmp_pushed_back_result[i]
+        test2 = loop_pushed_back_result[i]
+
+        diff = test1 - test2
+
+        print(torch.unique(diff==0))
+
+
+if __name__ == '__main__':
+    check_vectorized()

@@ -188,7 +188,7 @@ def compute_view_dependent_ggx_distribution_ref_torch_vectorized(ggx_alpha, norm
 
 
 
-def compute_ggx_distribution_reference_torch_vectorized(res,ggx_alpha,normal_directions, directions):
+def compute_ggx_distribution_reference_torch_vectorized(res,ggx_alpha,normal_directions, directions,directions_map,apply_jacobian=False):
     """
     :param res:
     :param ggx_alpha:
@@ -199,11 +199,17 @@ def compute_ggx_distribution_reference_torch_vectorized(res,ggx_alpha,normal_dir
     normal_direction_normalized = normal_directions / torch.linalg.norm(normal_directions,dim = -1, keepdim = True)
     cosine = torch.einsum('bl,bijkl->bijk', normal_direction_normalized, directions)
     ndf = ndf_isotropic_torch_vectorized(ggx_alpha,cosine)
+
+    if apply_jacobian:
+        j = torch_util.torch_jacobian_vertorized(directions_map)
+        ndf = ndf * j
+
+
     return ndf
 
 
 
-def compute_ggx_distribution_reference(res,ggx_alpha,normal_direction):
+def compute_ggx_distribution_reference(res,ggx_alpha,normal_direction,apply_jacobian=False):
     """
     Compute the reference GGX in cube map form. normal_direction is the assumed GGX normal(where there is highest pdf)
     :param res:
@@ -215,10 +221,15 @@ def compute_ggx_distribution_reference(res,ggx_alpha,normal_direction):
     assert normal_direction.size == 3
     normal_direction_normalized = normal_direction / np.linalg.norm(normal_direction)
     directions = map_util.texel_directions(res)
-    directions = mat_util.normalized(directions,axis=-1)
+    normalized_directions = mat_util.normalized(directions,axis=-1)
 
-    cosine = np.dot(directions,normal_direction_normalized.flatten())
+    cosine = np.dot(normalized_directions,normal_direction_normalized.flatten())
     ndf = ggx.ndf_isotropic(cosine)
+
+    if apply_jacobian:
+        j = map_util.jacobian_vertorized(directions)
+        ndf = ndf * j
+
 
     return ndf.reshape(ndf.shape+(1,))
 

@@ -120,6 +120,7 @@ if __name__ == "__main__":
     # print(coefficient_const8.shape)
     # print(coefficient_quad32.shape)
 
-    create_model(False,32, 3)
+    for l_idx in range(7):
+        create_model(False,32,l_idx)
 
     print("Done")

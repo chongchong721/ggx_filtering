@@ -481,6 +481,7 @@ def process_bilinear_samples(trilerp_sample_info: {}, mipmaps: []):
     # loop each level(this design is mainly for numpy parallelization
     for level_idx in range(n_level):
         cur_res = 2 << (n_level - level_idx - 1)
+        cur_res_inv = 1 / cur_res
         condition = (level == level_idx)
         cur_uv_grid = uv_grid_list[level_idx]
 
@@ -496,11 +497,16 @@ def process_bilinear_samples(trilerp_sample_info: {}, mipmaps: []):
             """
             continue
 
-        u_location = torch.searchsorted(cur_uv_ascending_order, cur_u, right=False)  # j in np array order
+        # u_location = torch.searchsorted(cur_uv_ascending_order, cur_u, right=False)  # j in np array order
+        #
+        # v_location_inv = torch.searchsorted(cur_uv_ascending_order, cur_v, right=False)  # -i in np array order
+        # v_location = (
+        #                          cur_res + 2) - 1 - v_location_inv  # extended_res - 1 - v_location   # Visually, this v_location is the upper v(where v has a higher value)
 
-        v_location_inv = torch.searchsorted(cur_uv_ascending_order, cur_v, right=False)  # -i in np array order
-        v_location = (
-                                 cur_res + 2) - 1 - v_location_inv  # extended_res - 1 - v_location   # Visually, this v_location is the upper v(where v has a higher value)
+        u_location = torch.ceil((cur_u + 0.5 * cur_res_inv) / cur_res_inv).int()
+        v_location_inv = torch.ceil((cur_v + 0.5 * cur_res_inv) / cur_res_inv).int()
+        v_location = (cur_res + 2) - 1 - v_location_inv
+
 
 
         # The following two lines uses uv_grid ordering, where the order of v is inversed
@@ -728,7 +734,7 @@ def create_downsample_pattern(face_extended_res):
 
 
 
-def push_back(mipmaps):
+def push_back(mipmaps, j_inv=False):
     """
     Jacobian should be taken into consideration when pushing back,
     each 2*2 tile has a Jacobian weight
@@ -769,7 +775,11 @@ def push_back(mipmaps):
         xyz_bilerp_upper has a resolution of 2res * 2res, the neighboring 4 are the jacobian used for the bilerp samples
         """
         xyz_bilerp_upper = downsample_xyz_pattern_full(extended_upper_res)
-        j = torch_jacobian_vertorized(xyz_bilerp_upper)
+        if not j_inv:
+            j = torch_jacobian_vertorized(xyz_bilerp_upper)
+        else:
+            j = 1 / torch_jacobian_vertorized(xyz_bilerp_upper)
+
         j_sum = j.view(6,res,2,res,2).sum(dim=(2,4))
 
         j_pattern_upper_left = j[:,0::2,0::2]

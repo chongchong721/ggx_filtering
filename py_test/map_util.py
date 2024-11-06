@@ -582,7 +582,7 @@ def gen_theta_phi(faces_xyz,frame_idx, follow_code = False):
 
 
 
-def log_filename(ggx_alpha, n_sample_per_frame ,n_sample_per_level,constant,adjust_level, optim_method:str , random_shuffle = False, allow_neg_weight = False, post_fix_for_dirs = None):
+def log_filename(ggx_alpha, n_sample_per_frame ,n_sample_per_level,constant,adjust_level, optim_method:str , random_shuffle = False, allow_neg_weight = False, ggx_ref_jac_weight = False,post_fix_for_dirs = None):
     log_name = 'optim_info_multi_ggx_' + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
 
     if constant:
@@ -601,6 +601,9 @@ def log_filename(ggx_alpha, n_sample_per_frame ,n_sample_per_level,constant,adju
     if allow_neg_weight:
         log_name = log_name + "_negweight"
 
+    if ggx_ref_jac_weight:
+        log_name = log_name + "_jacref"
+
     if post_fix_for_dirs is not None:
         log_name = log_name + "_" + post_fix_for_dirs
 
@@ -608,7 +611,7 @@ def log_filename(ggx_alpha, n_sample_per_frame ,n_sample_per_level,constant,adju
 
     return log_name
 
-def dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optim_method:str , allow_neg_weight = False, post_fix_for_dirs = None):
+def dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optim_method:str , allow_neg_weight = False, ggx_ref_jac_weight = False,post_fix_for_dirs = None):
     if constant:
         dir_name = "constant"+ str(n_sample_per_frame)  + "_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
     else:
@@ -622,6 +625,9 @@ def dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, ad
     if allow_neg_weight:
         dir_name = dir_name + "_negweight"
 
+    if ggx_ref_jac_weight:
+        dir_name = dir_name + "_jacref"
+
     dir_name = dir_name + "_dirs"
     if post_fix_for_dirs is not None:
         dir_name = dir_name + "_" + post_fix_for_dirs
@@ -629,7 +635,7 @@ def dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, ad
 
     return dir_name
 
-def model_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optim_method:str , random_shuffle = False, allow_neg_weight = False, post_fix_for_dirs = None):
+def model_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optim_method:str , random_shuffle = False, allow_neg_weight = False, ggx_ref_jac_weight = False,post_fix_for_dirs = None):
     if constant:
         model_name = "constant"+ str(n_sample_per_frame)  + "_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
     else:
@@ -645,6 +651,9 @@ def model_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, 
 
     if allow_neg_weight:
         model_name = model_name + "_negweight"
+
+    if ggx_ref_jac_weight:
+        model_name = model_name + "_jacref"
 
     if post_fix_for_dirs is not None:
         model_name = model_name + "_" + post_fix_for_dirs

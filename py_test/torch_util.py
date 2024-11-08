@@ -70,7 +70,16 @@ def get_half_vector_torch_vectorized(v:torch.Tensor,l:torch.Tensor):
     return wh
 
 
-
+def get_all_half_vector_torch_vectorized(v:torch.Tensor,l:torch.Tensor):
+    """
+    :param v: in shape of [N,3]
+    :param l: in [N,6,128,128,3]
+    :return:
+    """
+    v = v.view(v.shape[0],1,1,1,3)
+    wh = v + l
+    wh = wh / torch.linalg.norm(wh, dim=-1, keepdim=True)
+    return wh
 
 
 def torch_jacobian_vertorized(xyz):

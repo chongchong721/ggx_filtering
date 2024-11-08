@@ -169,11 +169,12 @@ def ndf_isotropic_torch_vectorized(alpha, cos_theta):
 
 
 
-def compute_view_dependent_ggx_distribution_ref_torch_vectorized(ggx_alpha, normal_directions, directions, view_direction):
+def compute_view_dependent_ggx_distribution_ref_torch_vectorized(ggx_alpha, normal_directions, directions, directions_map ,view_direction, apply_jacobian = False):
     """
     :param ggx_alpha:
     :param normal_directions: in shape of [N,3]
-    :param directions: texel directions(pregen) in shape of [n_sample_per_level,6,res,res,3]?
+    :param directions: texel directions(pregen) in shape of [n_sample_per_level,6,res,res,3], this directions should be normalized
+    :param directions_map: un-normalized directions(on the cubemap)
     :param view_direction: the view direction
     :return:
 
@@ -184,7 +185,40 @@ def compute_view_dependent_ggx_distribution_ref_torch_vectorized(ggx_alpha, norm
     half_vec = torch_util.get_half_vector_torch_vectorized(view_direction,directions)
     cosine = torch.einsum('bl,bijkl->bijk', normal_direction_normalized, half_vec)
     ndf = ndf_isotropic_torch_vectorized(ggx_alpha,cosine)
+
+    if apply_jacobian:
+        #which directions to use, half_vec or map direction? This will make huge difference when viewing angle close to grazing angle?
+        j = torch_util.torch_jacobian_vertorized(directions_map)
+        ndf = ndf * j
+
     return ndf
+
+
+
+
+def compute_ggx_distribution_reference_half_vector_torch_vectorized(res,ggx_alpha,normal_directions, directions,directions_map,apply_jacobian=False):
+    """
+    The half vector is computed as (normal + directions). Not
+    :param res:
+    :param ggx_alpha:
+    :param normal_directions:
+    :param directions:
+    :param directions_map:
+    :param apply_jacobian:
+    :return:
+    """
+    normal_direction_normalized = normal_directions / torch.linalg.norm(normal_directions,dim = -1, keepdim = True)
+    half_vec = torch_util.get_all_half_vector_torch_vectorized(normal_direction_normalized,directions)
+    cosine = torch.einsum('bl,bijkl->bijk', normal_direction_normalized, half_vec)
+    ndf = ndf_isotropic_torch_vectorized(ggx_alpha,cosine)
+
+    if apply_jacobian:
+        j = torch_util.torch_jacobian_vertorized(directions_map)
+        ndf = ndf * j
+
+
+    return ndf
+
 
 
 
@@ -194,6 +228,7 @@ def compute_ggx_distribution_reference_torch_vectorized(res,ggx_alpha,normal_dir
     :param ggx_alpha:
     :param normal_directions: in shape of [N,3]
     :param directions: texel directions(pregen) in shape of [n_sample_per_level,6,res,res,3]?
+    :param directions_map: un-normalized directions(on the cubemap)
     :return:
     """
     normal_direction_normalized = normal_directions / torch.linalg.norm(normal_directions,dim = -1, keepdim = True)

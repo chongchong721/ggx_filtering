@@ -2,6 +2,8 @@ import numpy as np
 from scipy.stats import expon
 
 
+lowest_error_jacref = [0.006113674904304973,0.016565623331707174,0.04724710372148892,0.11944272311253847,0.27541160386140584,0.5362286413940467,0.6909547738693467]
+
 def roughness_from_gloss(gloss, max_spec_power = 16, sqrt = True):
     """
     To match ref and filtered result for level 1, though level 3 still does not match
@@ -44,6 +46,6 @@ def cubemap_level_params(max_power = 16, sqrt = True):
 
 
 if __name__ == '__main__':
-    levels = cubemap_level_params(18)
+    levels = cubemap_level_params(18,False)
     for l in levels:
         print(l.roughness)

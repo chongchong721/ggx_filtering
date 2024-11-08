@@ -6,7 +6,7 @@ import map_util
 import mat_util
 from datetime import datetime
 
-from reference import compute_ggx_distribution_reference,compute_ggx_distribution_reference_torch_vectorized
+from reference import compute_ggx_distribution_reference,compute_ggx_distribution_reference_torch_vectorized,compute_ggx_distribution_reference_half_vector_torch_vectorized
 
 import scipy
 import torch
@@ -755,7 +755,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             weight_per_frame, xyz_per_frame, theta_phi_per_frame = precompute_opt_info(all_locations,
                                                                                        n_sample_per_level)
             #new reference
-            ref_list = compute_ggx_distribution_reference_torch_vectorized(128,ggx_alpha,all_locations,tex_directions_res,tex_directions_res_map,ggx_ref_jac_weight)
+            ref_list = compute_ggx_distribution_reference_half_vector_torch_vectorized(128,ggx_alpha,all_locations,tex_directions_res,tex_directions_res_map,ggx_ref_jac_weight)
             ref_list = ref_list.reshape(ref_list.shape + (1,))
             ref_list = ref_list / torch.sum(ref_list,dim=(1,2,3,4),keepdim=True)
 

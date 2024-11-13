@@ -31,7 +31,106 @@ def gen_tex_levels(n_level,n_high_res):
 
 
 
+def fetch_sample_view_dependent_python_table(tex_input,output_level, coeff_table, n_sample_per_frame ,follow_code = False, constant = True, j_adjust = True, allow_neg_weight = False, view_option_str="None",view_direction = np.array([1.0,0.0,0.0])):
+    coefficient_table = coeff_table
+    interpolator = interpolation.trilinear_mipmap_interpolator(tex_input)
 
+    n_res = 128 >> output_level
+    faces_xyz = map_util.texel_directions(n_res)
+    faces_xyz_normalized = faces_xyz / np.linalg.norm(faces_xyz, axis=-1, keepdims=True)
+    view_direction = view_direction / np.linalg.norm(view_direction, axis=-1, keepdims=True)
+    cosine_view = np.dot(faces_xyz_normalized,view_direction)
+
+    mask_above_horizon = cosine_view > 0.0
+
+    view_theta = np.arccos(cosine_view)
+    view_theta2 = view_theta ** 2
+
+    color = np.zeros((6, n_res, n_res, 3))
+    weight = np.zeros((6, n_res, n_res))
+
+    for frame_idx in range(3):
+        X, Y, Z = gen_frame_xyz(faces_xyz, frame_idx)
+        frame_weight = gen_frame_weight(faces_xyz, frame_idx, follow_code)
+        theta, phi, theta2, phi2 = gen_theta_phi(faces_xyz, frame_idx=frame_idx, follow_code=follow_code)
+        coeff_start = frame_idx * n_sample_per_frame
+        coeff_end = coeff_start + n_sample_per_frame
+
+        for sample_idx in range(n_sample_per_frame):
+
+            coeff_x_table = coefficient_table[0, :, coeff_start + sample_idx]
+            coeff_y_table = coefficient_table[1, :, coeff_start + sample_idx]
+            coeff_z_table = coefficient_table[2, :, coeff_start + sample_idx]
+            coeff_level_table = coefficient_table[3, :, coeff_start + sample_idx]
+            coeff_weight_table = coefficient_table[4, :, coeff_start + sample_idx]
+
+            if view_option_str == "even_only":
+                coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2 + coeff_x_table[3] * view_theta2 + coeff_x_table[4] * view_theta
+                coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2 + coeff_y_table[3] * view_theta2 + coeff_y_table[4] * view_theta
+                coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2 + coeff_z_table[3] * view_theta2 + coeff_z_table[4] * view_theta
+                sample_level = coeff_level_table[0] + coeff_level_table[1] * theta2 + coeff_level_table[2] * phi2 + coeff_level_table[3] * view_theta2 + coeff_level_table[4] * view_theta
+                sample_weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2 + coeff_weight_table[3] * view_theta2 + coeff_weight_table[4] * view_theta
+            elif view_option_str == "view_only":
+                coeff_x = coeff_x_table[0] + coeff_x_table[1] * view_theta2 + coeff_x_table[2] * view_theta
+                coeff_y = coeff_y_table[0] + coeff_y_table[1] * view_theta2 + coeff_y_table[2] * view_theta
+                coeff_z = coeff_z_table[0] + coeff_z_table[1] * view_theta2 + coeff_z_table[2] * view_theta
+                sample_level = coeff_level_table[0] + coeff_level_table[1] * view_theta2 + coeff_level_table[2] * view_theta
+                sample_weight = coeff_weight_table[0] + coeff_weight_table[1] * view_theta2 + coeff_weight_table[2] * view_theta
+            elif view_option_str == "odd":
+                coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2 + coeff_x_table[
+                    3] * view_theta2 + coeff_x_table[4] * view_theta + coeff_x_table[5] * view_theta * theta2 + \
+                          coeff_x_table[6] * view_theta * phi2
+                coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2 + coeff_y_table[
+                    3] * view_theta2 + coeff_y_table[4] * view_theta + coeff_y_table[5] * view_theta * theta2 + \
+                          coeff_y_table[6] * view_theta * phi2
+                coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2 + coeff_z_table[
+                    3] * view_theta2 + coeff_z_table[4] * view_theta + coeff_z_table[5] * view_theta * theta2 + \
+                          coeff_z_table[6] * view_theta * phi2
+                sample_level = coeff_level_table[0] + coeff_level_table[1] * theta2 + coeff_level_table[2] * phi2 + \
+                        coeff_level_table[3] * view_theta2 + coeff_level_table[4] * view_theta + coeff_level_table[
+                            5] * view_theta * theta2 + coeff_level_table[6] * view_theta * phi2
+                sample_weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2 + \
+                         coeff_weight_table[3] * view_theta2 + coeff_weight_table[4] * view_theta + coeff_weight_table[
+                             5] * view_theta * theta2 + coeff_weight_table[6] * view_theta * phi2
+            else:
+                raise NotImplementedError
+
+            # min_weight = sample_weight.min()
+
+            coeff_x = np.stack((coeff_x, coeff_x, coeff_x), axis=-1)
+            coeff_y = np.stack((coeff_y, coeff_y, coeff_y), axis=-1)
+            coeff_z = np.stack((coeff_z, coeff_z, coeff_z), axis=-1)
+
+
+            if not allow_neg_weight:
+                sample_weight = np.clip(sample_weight, 0, a_max=None)
+            sample_weight = sample_weight * frame_weight
+
+            sample_direction = coeff_x * X + coeff_y * Y + coeff_z * Z
+            abs_direction = np.abs(sample_direction)
+            max_dir = np.max(abs_direction, axis=-1)
+            sample_direction_map = sample_direction / np.stack([max_dir, max_dir, max_dir], axis=-1)
+
+            if j_adjust:
+                # adjust level
+                j = 3 / 4 * np.log2(map_util.dot_vectorized_4D(sample_direction_map, sample_direction_map))
+                sample_level += j
+
+            sample_level = np.clip(sample_level, 0, 6)
+
+            color_tmp = interpolator.interpolate_all(sample_direction_map, sample_level)
+            color_tmp = np.where(cosine_view > 0.0, color_tmp, 0.0)
+
+            color += color_tmp * np.stack((sample_weight, sample_weight, sample_weight), axis=-1)
+            weight += sample_weight
+
+    # devide by weight
+    weight_stack = np.stack((weight, weight, weight), axis=-1)
+    color = color / weight_stack
+
+    color_final = np.where(cosine_view > 0.0, color, 0.0)
+
+    return color
 
 
 

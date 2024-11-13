@@ -94,7 +94,8 @@ def outer_loop(normalized_xyz_output,normalized_xyz_input,j_weighted_input,alpha
 
     return result
 
-
+def compute_reference_view_dependent(intput_map,cubemap_res,ref_res,GGX_alpha,view_direction,save_file_name=None):
+    pass
 
 def compute_reference(input_map, cubemap_res, ref_res, GGX_alpha, save_file_name = None):
     """

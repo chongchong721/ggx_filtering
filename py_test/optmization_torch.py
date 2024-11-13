@@ -4,8 +4,7 @@ import map_util
 import mat_util
 from datetime import datetime
 
-from py_test.reference import compute_view_dependent_ggx_distribution_ref_torch_vectorized
-from reference import compute_ggx_distribution_reference,compute_ggx_distribution_reference_torch_vectorized,compute_ggx_distribution_reference_half_vector_torch_vectorized
+from reference import compute_ggx_distribution_reference,compute_ggx_distribution_reference_torch_vectorized,compute_ggx_distribution_reference_half_vector_torch_vectorized,compute_view_dependent_ggx_distribution_ref_torch_vectorized
 
 import scipy
 import torch
@@ -288,11 +287,11 @@ def multiple_texel_full_optimization_view_dependent_vectorized(n_sample_per_fram
                 level = coeff_level_table[0] + coeff_level_table[1] * view_theta2 + coeff_level_table[2] * view_theta
                 weight = coeff_weight_table[0] + coeff_weight_table[1] * view_theta2 + coeff_weight_table[2] * view_theta
             elif view_option_str == "odd":
-                coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2 + coeff_x_table[3] * view_theta2 + coeff_x_table[4] * view_theta + coeff_x_table[5] * view_theta * theta2
-                coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2 + coeff_y_table[3] * view_theta2 + coeff_y_table[4] * view_theta
-                coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2 + coeff_z_table[3] * view_theta2 + coeff_z_table[4] * view_theta
-                level = coeff_level_table[0] + coeff_level_table[1] * theta2 + coeff_level_table[2] * phi2 + coeff_level_table[3] * view_theta2 + coeff_level_table[4] * view_theta
-                weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2 + coeff_weight_table[3] * view_theta2 + coeff_weight_table[4] * view_theta
+                coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2 + coeff_x_table[3] * view_theta2 + coeff_x_table[4] * view_theta + coeff_x_table[5] * view_theta * theta2 + coeff_x_table[6] * view_theta * phi2
+                coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2 + coeff_y_table[3] * view_theta2 + coeff_y_table[4] * view_theta + coeff_y_table[5] * view_theta * theta2 + coeff_y_table[6] * view_theta * phi2
+                coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2 + coeff_z_table[3] * view_theta2 + coeff_z_table[4] * view_theta + coeff_z_table[5] * view_theta * theta2 + coeff_z_table[6] * view_theta * phi2
+                level = coeff_level_table[0] + coeff_level_table[1] * theta2 + coeff_level_table[2] * phi2 + coeff_level_table[3] * view_theta2 + coeff_level_table[4] * view_theta + coeff_level_table[5] * view_theta * theta2 + coeff_level_table[6] * view_theta * phi2
+                weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2 + coeff_weight_table[3] * view_theta2 + coeff_weight_table[4] * view_theta + coeff_weight_table[5] * view_theta * theta2 + coeff_weight_table[6] * view_theta * phi2
             else:
                 raise NotImplementedError
 
@@ -936,7 +935,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             if(torch.isnan(obj)):
                 logger.info("NaN loss detected in LBFGS, Save last param and terminate!")
                 save_model(model, "./model/" + model_name + "_nan")
-            if i % 10 == 0:
+            if i % 50 == 0:
                 logger.info(f"saving model")
                 save_model(model, "./model/" + model_name)
                 if not view_dependent:

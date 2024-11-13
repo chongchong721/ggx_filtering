@@ -5,7 +5,7 @@ from reference import compute_ggx_distribution_reference,compute_ggx_distributio
 import numpy as np
 import mat_util
 import map_util
-from optmization_torch import precompute_opt_info,test_multiple_texel_full_optimization_vectorized,test_multiple_texel_full_optimization
+from optmization_torch import precompute_opt_info,multiple_texel_full_optimization_vectorized,multiple_texel_full_optimization
 import specular
 import logging
 
@@ -38,15 +38,15 @@ def check_vectorized():
     weight_per_frame_global, xyz_per_frame_global, theta_phi_per_frame_global = precompute_opt_info(all_locations,
                                                                                                     n_sample_per_level)
 
-    tmp_pushed_back_result = test_multiple_texel_full_optimization_vectorized(8,
-                                                                              n_sample_per_level, ref_list_global,
-                                                                              weight_per_frame_global, xyz_per_frame_global,
-                                                                              theta_phi_per_frame_global, params,
-                                                                              False, True, True,
-                                                                              device)
+    tmp_pushed_back_result = multiple_texel_full_optimization_vectorized(8,
+                                                                         n_sample_per_level, ref_list_global,
+                                                                         weight_per_frame_global, xyz_per_frame_global,
+                                                                         theta_phi_per_frame_global, params,
+                                                                         False, True, True,
+                                                                         device)
 
 
-    _,loop_pushed_back_result = test_multiple_texel_full_optimization(None,8,n_sample_per_level, ref_list_global, weight_per_frame_global, xyz_per_frame_global,theta_phi_per_frame_global, params,False,True,True)
+    _,loop_pushed_back_result = multiple_texel_full_optimization(None, 8, n_sample_per_level, ref_list_global, weight_per_frame_global, xyz_per_frame_global, theta_phi_per_frame_global, params, False, True, True)
 
     for i in range(n_sample_per_level):
         test1 = tmp_pushed_back_result[i]
@@ -66,7 +66,7 @@ def find_closest_alpha():
     allow_neg_weight = True
     ggx_ref_jac_weight = False
 
-    model = torch_util.SimpleModel(n_sample_per_frame)
+    model = torch_util.QuadModel(n_sample_per_frame)
 
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -110,12 +110,12 @@ def find_closest_alpha():
 
 
         params = model()
-        tmp_pushed_back_result = test_multiple_texel_full_optimization_vectorized(n_sample_per_frame,
-                                                                                  n_sample_per_level, None,
-                                                                                  weight_per_frame, xyz_per_frame,
-                                                                                  theta_phi_per_frame, params,
-                                                                                  constant, adjust_level, allow_neg_weight,
-                                                                                  device)
+        tmp_pushed_back_result = multiple_texel_full_optimization_vectorized(n_sample_per_frame,
+                                                                             n_sample_per_level, None,
+                                                                             weight_per_frame, xyz_per_frame,
+                                                                             theta_phi_per_frame, params,
+                                                                             constant, adjust_level, allow_neg_weight,
+                                                                             device)
         # normalize pushed_back result
         tmp_pushed_back_sum = torch.sum(tmp_pushed_back_result, dim=[1, 2, 3, 4], keepdim=True)
         tmp_pushed_back_result /= (tmp_pushed_back_sum + 1e-7)

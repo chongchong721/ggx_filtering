@@ -1,6 +1,6 @@
 import numpy as np
 
-from torch_util import SimpleModel,ConstantModel
+from torch_util import QuadModel,ConstantModel
 
 class float4:
     def __init__(self, v0,v1,v2,v3):
@@ -38,7 +38,7 @@ def create_model(const:bool, n_sample_per_frame, n_level):
         model = ConstantModel(n_sample_per_frame)
         name = "const" + str(n_sample_per_frame) + "level" + str(n_level)
     else:
-        model = SimpleModel(n_sample_per_frame)
+        model = QuadModel(n_sample_per_frame)
         name = "quad" + str(n_sample_per_frame) + "level" + str(n_level)
 
     with torch.no_grad():

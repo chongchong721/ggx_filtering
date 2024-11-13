@@ -6,14 +6,68 @@ import map_util
 chan_count = 1
 
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cpu')
 
 
-
-
-class SimpleModel(torch.nn.Module):
+class QuadModel_View_Odd(torch.nn.Module):
+    """
+    Direction is determined by c0 + c1 * theta^2 + c2 * phi^2+
+                               c3 * theta_view^2 + c4 * theta_view + c5 * theta_view * theta2 + c6 * theta_view * phi2
+    """
     def __init__(self, n_sample_per_frame):
-        super(SimpleModel, self).__init__()
+        super(QuadModel_View_Odd, self).__init__()
+        self.params = torch.nn.Parameter(torch.rand((5, 7, 3 * n_sample_per_frame)), requires_grad=True)
+
+    def forward(self):
+        return self.params
+
+
+class QuadModel_View_EvenOnly(torch.nn.Module):
+    """
+    Direction is determined by c0 + c1 * theta^2 + c2 * phi^2+ c3 * theta_view^2 + c4 * theta_view
+    """
+    def __init__(self, n_sample_per_frame):
+        super(QuadModel_View_EvenOnly, self).__init__()
+        self.params = torch.nn.Parameter(torch.rand((5, 5, 3 * n_sample_per_frame)), requires_grad=True)
+
+    def forward(self):
+        return self.params
+
+class QuadModel_ViewOnly(torch.nn.Module):
+    """
+    The direction is only decided by view, others are constant(c0 + c1 * theta_view^2 + c2 * theta_view)
+    """
+    def __init__(self, n_sample_per_frame):
+        super(QuadModel_ViewOnly, self).__init__()
+        self.params = torch.rand(5,3,3*n_sample_per_frame,requires_grad=True)
+
+    def forward(self):
+        return self.params
+
+class QuadModel_View_ThetaPhi(torch.nn.Module):
+    """
+    Since the cube is not a sphere, phi of the viewing direction might also have impact on the shape of the kernel,
+    for most accurate result, adding both theta_view and phi_view is necessary
+
+    Now we will try to do theta_view only first
+
+    Direction is determined by c0 + c1 * theta^2 + c2 * phi^2+
+                               c3 * theta_view^2 + c4 * theta_view + c5 * theta_view * theta2 + c6 * theta_view * phi2 +
+                               c5 * phi_view ^2 + c6 * phi_view + c7 * phi_view * theta2 + c8 * phi_view * phi2
+
+
+    """
+    def __init__(self, n_sample_per_frame):
+        super(QuadModel_View_ThetaPhi, self).__init__()
+        self.params = torch.rand(5,9,3*n_sample_per_frame,requires_grad=True)
+
+    def forward(self):
+        return self.params
+
+class QuadModel(torch.nn.Module):
+    def __init__(self, n_sample_per_frame):
+        super(QuadModel, self).__init__()
         self.params = torch.nn.Parameter(torch.rand((5,3,3*n_sample_per_frame)), requires_grad=True)
 
     def forward(self):
@@ -76,8 +130,8 @@ def get_all_half_vector_torch_vectorized(v:torch.Tensor,l:torch.Tensor):
     :param l: in [N,6,128,128,3]
     :return:
     """
-    v = v.view(v.shape[0],1,1,1,3)
-    wh = v + l
+    #v = v.view(v.shape[0],1,1,1,3)
+    wh = v.view(v.shape[0],1,1,1,3) + l
     wh = wh / torch.linalg.norm(wh, dim=-1, keepdim=True)
     return wh
 
@@ -932,6 +986,25 @@ def compute_contribution(location, level, initial_weight, n_level):
 
 
 
+def random_dir_hemisphere(uv = None, n_dir = 1):
+    if uv is None:
+        g = torch.Generator()
+        u = torch.rand(n_dir,generator=g, device = device)
+        v = torch.rand(n_dir,generator=g, device = device)
+    else:
+        assert uv.shape[1] == 2 and uv.shape[0] == n_dir
+        u = uv[:, 0]
+        v = uv[:, 1]
+    phi = u * 2 * np.pi
+    cos_theta = v
+    sin_theta = torch.sqrt(1 - cos_theta * cos_theta)
+    x = torch.cos(phi) * sin_theta
+    y = torch.sin(phi) * sin_theta
+    z = cos_theta
+    return torch.stack((x, y, z), dim=1)
+
+
+
 def random_dir_sphere(uv = None, n_dir = 1):
     if uv is None:
         g = torch.Generator()
@@ -969,6 +1042,104 @@ def random_dir_cube(uv = None, n_dir = 1):
     return xyz_cube
 
 
+def sample_uniform_hemisphere(uv):
+    # Generate N random points
+    u = uv[0,:]
+    v = uv[1,:]
+
+    theta = 2 * torch.pi * u
+    phi = np.arccos(v)  # Since z = cos(theta) should be uniformly distributed
+
+    sin_phi = np.sqrt(1 - v ** 2)
+
+    x = sin_phi * np.cos(theta)
+    y = sin_phi * np.sin(theta)
+    z = v  # Ensures z >= 0, i.e., hemisphere
+
+    directions = np.stack((x, y, z), axis=1)  # Shape: [N, 3]
+    return directions
+
+
+
+def sample_directions_over_hemispheres(normals, uv):
+    N = normals.shape[0]
+
+    # Sample directions on the canonical hemisphere
+    #sampled_dirs = random_dir_hemisphere(uv,n_dir=N)
+
+    u = uv[:, 0]
+    v = uv[:, 1]
+    phi = u * 2 * np.pi
+    cos_theta = v
+    sin_theta = torch.sqrt(1 - cos_theta * cos_theta)
+    x = torch.cos(phi) * sin_theta
+    y = torch.sin(phi) * sin_theta
+    z = cos_theta
+    sampled_dirs = torch.stack((x, y, z), dim=1)
+
+    # Orthonormal basis (u, v, w) where w = normal
+    #w = torch.nn.functional.normalize(normals, p=2, dim=1)
+    w = normals
+
+    reference = torch.tensor([1.0, 0.0, 0.0], device=device, dtype=torch.float32).unsqueeze(0)  # [1, 3]
+    dot = torch.abs(torch.sum(w * reference, dim=1, keepdim=True))  # [N, 1]
+    mask = dot > 0.9  # Threshold to determine if w is close to reference
+
+    # If w is close to [1,0,0], use [0,1,0] as reference
+    reference_alt = torch.tensor([0.0, 1.0, 0.0], device=device, dtype=torch.float32).unsqueeze(0)  # [1, 3]
+    reference_final = torch.where(mask, reference_alt.expand(N, -1), reference.expand(N, -1))  # [N, 3]
+
+    # Compute orthonormal basis vectors u and v
+    u = torch.cross(reference_final, w, dim=1)  # [N, 3]
+    u = torch.nn.functional.normalize(u, p=2, dim=1)  # [N, 3]
+
+    v = torch.cross(w, u, dim=1)  # [N, 3]
+    # No need to normalize v because u and w are unit vectors and orthogonal
+
+    # Rotate sampled directions to align with the given normals
+    # sampled_dirs is [N, 3], u, v, w are each [N, 3]
+    # The rotation is: rotated_dir = sampled_dirs.x * u + sampled_dirs.y * v + sampled_dirs.z * w
+    rotated_dirs = (
+            sampled_dirs[:, 0:1] * u +
+            sampled_dirs[:, 1:2] * v +
+            sampled_dirs[:, 2:3] * w
+    )  # [N, 3]
+
+    return rotated_dirs, torch.arccos(cos_theta)
+
+
+
+
+
+def sample_view_dependent_location(n_sample_per_level, g = None):
+    """
+
+    :param n_sample_per_level:
+    :param g:
+    :return:
+    """
+    if g is None:
+        g = torch.Generator()
+
+    uv = torch.rand((n_sample_per_level,2), generator=g, device = device)
+    xyz = random_dir_sphere(uv,n_sample_per_level)
+    xyz_cube = dir_to_cube_coordinate(xyz)
+
+
+    """
+    A valid view direction should be in the hemisphere where xyz is the normal
+    We do not sample invalid direction since there is no meaning to optimize something that will always be zero
+    """
+
+    uv = torch.rand((n_sample_per_level,2),generator=g, device = device)
+
+    view_direction, view_theta = sample_directions_over_hemispheres(xyz,uv)
+
+    return (view_direction, view_theta ,xyz_cube, xyz)
+
+
+
+
 
 def sample_location(n_sample_per_level, g = None):
     """
@@ -981,5 +1152,11 @@ def sample_location(n_sample_per_level, g = None):
     if g is None:
         g = torch.Generator()
     uv = torch.rand((n_sample_per_level,2),generator=g,device=device)
-    xyz = random_dir_cube(uv, n_sample_per_level)
-    return xyz
+    xyz = random_dir_sphere(uv,n_sample_per_level)
+    xyz_cube = dir_to_cube_coordinate(xyz)
+    return xyz_cube,xyz
+
+
+if __name__ == '__main__':
+    g = torch.Generator()
+    t = sample_view_dependent_location(100,g)

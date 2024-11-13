@@ -15,9 +15,9 @@ import interpolation
 
 import torch
 import torch_util
-"""
-Compute the reference \int l(h)d(h)dh by numerically integrate every texel we have
-"""
+
+#Compute the reference \int l(h)d(h)dh by numerically integrate every texel we have
+
 
 
 
@@ -176,14 +176,15 @@ def compute_view_dependent_ggx_distribution_ref_torch_vectorized(ggx_alpha, norm
     :param directions: texel directions(pregen) in shape of [n_sample_per_level,6,res,res,3], this directions should be normalized
     :param directions_map: un-normalized directions(on the cubemap)
     :param view_direction: the view direction
+    :param normal_directions: normalized normal directions
     :return:
 
     When computing view dependent reference, directions can be thought as the light direction. Given n, we can compute
     the h for each texel, and we can get the NDF of h for each direction
     """
-    normal_direction_normalized = normal_directions / torch.linalg.norm(normal_directions, dim=-1, keepdim=True)
-    half_vec = torch_util.get_half_vector_torch_vectorized(view_direction,directions)
-    cosine = torch.einsum('bl,bijkl->bijk', normal_direction_normalized, half_vec)
+    #normal_direction_normalized = normal_directions / torch.linalg.norm(normal_directions, dim=-1, keepdim=True)
+    half_vec = torch_util.get_all_half_vector_torch_vectorized(view_direction,directions)
+    cosine = torch.einsum('bl,bijkl->bijk', normal_directions, half_vec)
     ndf = ndf_isotropic_torch_vectorized(ggx_alpha,cosine)
 
     if apply_jacobian:
@@ -201,15 +202,15 @@ def compute_ggx_distribution_reference_half_vector_torch_vectorized(res,ggx_alph
     The half vector is computed as (normal + directions). Not
     :param res:
     :param ggx_alpha:
-    :param normal_directions:
+    :param normal_directions: this directions is normalized
     :param directions:
     :param directions_map:
     :param apply_jacobian:
     :return:
     """
-    normal_direction_normalized = normal_directions / torch.linalg.norm(normal_directions,dim = -1, keepdim = True)
-    half_vec = torch_util.get_all_half_vector_torch_vectorized(normal_direction_normalized,directions)
-    cosine = torch.einsum('bl,bijkl->bijk', normal_direction_normalized, half_vec)
+    #normal_direction_normalized = normal_directions / torch.linalg.norm(normal_directions,dim = -1, keepdim = True)
+    half_vec = torch_util.get_all_half_vector_torch_vectorized(normal_directions,directions)
+    cosine = torch.einsum('bl,bijkl->bijk', normal_directions, half_vec)
     ndf = ndf_isotropic_torch_vectorized(ggx_alpha,cosine)
 
     if apply_jacobian:

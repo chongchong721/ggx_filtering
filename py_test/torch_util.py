@@ -40,7 +40,7 @@ class QuadModel_ViewOnly(torch.nn.Module):
     """
     def __init__(self, n_sample_per_frame):
         super(QuadModel_ViewOnly, self).__init__()
-        self.params = torch.rand(5,3,3*n_sample_per_frame,requires_grad=True)
+        self.params = torch.nn.Parameter(torch.rand((5,3,3*n_sample_per_frame)),requires_grad=True)
 
     def forward(self):
         return self.params
@@ -60,7 +60,7 @@ class QuadModel_View_ThetaPhi(torch.nn.Module):
     """
     def __init__(self, n_sample_per_frame):
         super(QuadModel_View_ThetaPhi, self).__init__()
-        self.params = torch.rand(5,9,3*n_sample_per_frame,requires_grad=True)
+        self.params = torch.nn.Parameter(torch.rand((5,9,3*n_sample_per_frame)),requires_grad=True)
 
     def forward(self):
         return self.params

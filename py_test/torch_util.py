@@ -5,9 +5,9 @@ import map_util
 
 chan_count = 1
 
-
-#device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device = torch.device('cpu')
+#TODO: for testing, change this to cpu only
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#device = torch.device('cpu')
 
 
 class QuadModel_View_Odd(torch.nn.Module):

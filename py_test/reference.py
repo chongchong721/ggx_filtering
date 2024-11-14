@@ -169,8 +169,53 @@ def ndf_isotropic_torch_vectorized(alpha, cos_theta):
     return ndf
 
 
+def importance_sample_view_dependent_location(ggx_alpha, n_sample_per_frame, n_sample_per_level, normal_directions, view_directions):
+    """
+    Importance sampling, for each sample, sample n_sample_per_frame * 3 importance samples based on GGX VNDF to initialize optimization pipeline
+    :param ggx_alpha:
+    :param n_sample_per_frame:
+    :param n_sample_per_level:
+    :param normal_directions:
+    :param view_directions:
+    :return:
+    """
+    rng = np.random.default_rng()
+    ggx_sampler = material.VNDFSamplerGGX(ggx_alpha,ggx_alpha)
 
-def compute_view_dependent_ggx_distribution_ref_torch_vectorized(ggx_alpha, normal_directions, directions, directions_map ,view_direction, apply_jacobian = False):
+    local_view = material.rotate_vectors_to_up_batch(normal_directions,view_directions)
+
+    half_vec_list = []
+    for i in range(n_sample_per_level):
+        view = local_view[i]
+        half_vec_list_cur_view = []
+        for j in range(n_sample_per_frame*3):
+            h = ggx_sampler.sample_anisotropic_ggx_new(view)
+
+            #compute
+
+            half_vec_list_cur_view.append(h)
+
+        half_vec_list.append(half_vec_list_cur_view)
+
+
+
+def g1_isotropic_torch_vectorized():
+    pass
+
+def lambda_isotropic_torch_vectorized():
+    pass
+
+def vndf_isotropic_torch_vectorized():
+    pass
+
+
+
+def compute_ggx_vndf_ref_view_dependent_torch_vectorized():
+    pass
+
+
+
+def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_directions, directions, directions_map, view_direction, apply_jacobian = False):
     """
     :param ggx_alpha:
     :param normal_directions: in shape of [N,3]
@@ -179,6 +224,8 @@ def compute_view_dependent_ggx_distribution_ref_torch_vectorized(ggx_alpha, norm
     :param view_direction: the view direction
     :param normal_directions: normalized normal directions
     :return:
+
+    In this case normal_directions are n directions are l, view_direction is v
 
     When computing view dependent reference, directions can be thought as the light direction. Given n, we can compute
     the h for each texel, and we can get the NDF of h for each direction
@@ -198,7 +245,7 @@ def compute_view_dependent_ggx_distribution_ref_torch_vectorized(ggx_alpha, norm
 
 
 
-def compute_ggx_distribution_reference_half_vector_torch_vectorized(res,ggx_alpha,normal_directions, directions,directions_map,apply_jacobian=False):
+def compute_ggx_ndf_reference_half_vector_torch_vectorized(res, ggx_alpha, normal_directions, directions, directions_map, apply_jacobian=False):
     """
     The half vector is computed as (normal + directions). Not
     :param res:
@@ -210,6 +257,9 @@ def compute_ggx_distribution_reference_half_vector_torch_vectorized(res,ggx_alph
     :return:
     """
     #normal_direction_normalized = normal_directions / torch.linalg.norm(normal_directions,dim = -1, keepdim = True)
+
+    #We use normal directions to compute the have vector only because we are under the assumption n=v  (l + v)
+
     half_vec = torch_util.get_all_half_vector_torch_vectorized(normal_directions,directions)
     cosine = torch.einsum('bl,bijkl->bijk', normal_directions, half_vec)
     ndf = ndf_isotropic_torch_vectorized(ggx_alpha,cosine)
@@ -224,7 +274,7 @@ def compute_ggx_distribution_reference_half_vector_torch_vectorized(res,ggx_alph
 
 
 
-def compute_ggx_distribution_reference_torch_vectorized(res,ggx_alpha,normal_directions, directions,directions_map,apply_jacobian=False):
+def compute_ggx_ndf_reference_torch_vectorized(res, ggx_alpha, normal_directions, directions, directions_map, apply_jacobian=False):
     """
     :param res:
     :param ggx_alpha:
@@ -246,7 +296,7 @@ def compute_ggx_distribution_reference_torch_vectorized(res,ggx_alpha,normal_dir
 
 
 
-def compute_ggx_distribution_reference(res,ggx_alpha,normal_direction,apply_jacobian=False):
+def compute_ggx_ndf_reference(res, ggx_alpha, normal_direction, apply_jacobian=False):
     """
     Compute the reference GGX in cube map form. normal_direction is the assumed GGX normal(where there is highest pdf)
     :param res:

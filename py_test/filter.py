@@ -382,7 +382,12 @@ def synthetic_filter_showcase(params, constant:bool, adjust_level:bool, ggx_alph
     else:
         img_save_name = "filter_" + name + ".exr"
     ref_res = 128 >> level_to_test
-    result = fetch_samples_python_table(mipmaps, level_to_test, params, n_sample_per_frame, constant=constant, j_adjust=adjust_level, allow_neg_weight=allow_neg_weight)
+    if view_dependent:
+        view_direction = np.array([0.8,0.8,1])
+        view_direction /= np.linalg.norm(view_direction)
+        result = fetch_sample_view_dependent_python_table(mipmaps,level_to_test,params,n_sample_per_frame,constant=constant,j_adjust=adjust_level,allow_neg_weight=allow_neg_weight,view_option_str=view_option_str,view_direction=view_direction)
+    else:
+        result = fetch_samples_python_table(mipmaps, level_to_test, params, n_sample_per_frame, constant=constant, j_adjust=adjust_level, allow_neg_weight=allow_neg_weight)
     result *= 1000
     image_read.gen_cubemap_preview_image(result, ref_res, None, "./plots/" + name + "/" + img_save_name)
 
@@ -454,7 +459,7 @@ def test_coef_synthetic(constant:bool,ggx_alpha,n_sample_per_frame,n_multi_loc =
 
 
     #ref = reference.compute_reference(mipmap_l0,high_res,16,ggx_alpha)
-    ref = reference.compute_ggx_distribution_reference(16,0.1,direction)
+    ref = reference.compute_ggx_ndf_reference(16, 0.1, direction)
 
     result = fetch_samples_python_table(mipmaps,3,table,8,constant=constant, j_adjust=False)
 

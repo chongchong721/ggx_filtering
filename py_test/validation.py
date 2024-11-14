@@ -1,7 +1,7 @@
 import torch_util_all_locations
 import torch_util
 import torch
-from reference import compute_ggx_distribution_reference,compute_ggx_distribution_reference_torch_vectorized
+from reference import compute_ggx_ndf_reference,compute_ggx_ndf_reference_torch_vectorized
 import numpy as np
 import mat_util
 import map_util
@@ -26,7 +26,7 @@ def check_vectorized():
 
     for i in range(n_sample_per_level):
         location = all_locations[i, :]
-        ggx_ref = compute_ggx_distribution_reference(128, ggx_alpha, location)
+        ggx_ref = compute_ggx_ndf_reference(128, ggx_alpha, location)
         ggx_ref = torch.from_numpy(ggx_ref).to(device)
         ggx_ref /= torch.sum(ggx_ref)
         ref_list_global.append(ggx_ref)
@@ -124,9 +124,9 @@ def find_closest_alpha():
         level_alpha = info[level].roughness
 
 
-        ref_list = compute_ggx_distribution_reference_torch_vectorized(128, level_alpha, all_locations,
-                                                                       tex_directions_res,
-                                                                       tex_directions_res_map, ggx_ref_jac_weight)
+        ref_list = compute_ggx_ndf_reference_torch_vectorized(128, level_alpha, all_locations,
+                                                              tex_directions_res,
+                                                              tex_directions_res_map, ggx_ref_jac_weight)
         ref_list = ref_list.reshape(ref_list.shape + (1,))
         ref_list = ref_list / torch.sum(ref_list, dim=(1, 2, 3, 4), keepdim=True)
         diff = torch.abs(ref_list - tmp_pushed_back_result)
@@ -156,9 +156,9 @@ def find_closest_alpha():
 
         for i in range(len(alpha_list)):
             # new reference
-            ref_list = compute_ggx_distribution_reference_torch_vectorized(128, alpha_list[i], all_locations,
-                                                                           tex_directions_res,
-                                                                           tex_directions_res_map, ggx_ref_jac_weight)
+            ref_list = compute_ggx_ndf_reference_torch_vectorized(128, alpha_list[i], all_locations,
+                                                                  tex_directions_res,
+                                                                  tex_directions_res_map, ggx_ref_jac_weight)
             ref_list = ref_list.reshape(ref_list.shape + (1,))
             ref_list = ref_list / torch.sum(ref_list, dim=(1, 2, 3, 4), keepdim=True)
             diff = torch.abs(ref_list - tmp_pushed_back_result)

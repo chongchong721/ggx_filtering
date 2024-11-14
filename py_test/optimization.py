@@ -4,7 +4,7 @@ import mat_util
 from datetime import datetime
 from map_util import gen_frame_xyz,gen_frame_weight,frame_axis_index,gen_theta_phi
 from interpolation import gen_extended_uv_table,get_edge_information
-from reference import compute_ggx_distribution_reference
+from reference import compute_ggx_ndf_reference
 
 import scipy
 
@@ -533,7 +533,7 @@ def L1_error_one_texel(ggx_kernel, contribution_map):
 
 
 def test_optimize(ggx_alpha,res,texel_direction,n_sample_per_frame):
-    ggx_ref = compute_ggx_distribution_reference(res,ggx_alpha, texel_direction)
+    ggx_ref = compute_ggx_ndf_reference(res, ggx_alpha, texel_direction)
 
     #normalize ggx kernel
     ggx_ref /= np.sum(ggx_ref)
@@ -675,7 +675,7 @@ def compare_existing_coeff_table():
     import coefficient
     info = specular.cubemap_level_params(18)
     ggx_alpha = info[0].roughness
-    ggx_ref = compute_ggx_distribution_reference(128,ggx_alpha,location_global)
+    ggx_ref = compute_ggx_ndf_reference(128, ggx_alpha, location_global)
     ggx_ref /= np.sum(ggx_ref)
     coefficient_tab_level0 = coefficient.coefficient_quad32[0]
 
@@ -724,7 +724,7 @@ if __name__ == "__main__":
     # #BFGS optimization test
     # #test_optimize(0.01,128,location_global[0:1,:],8)
     #
-    ggx = compute_ggx_distribution_reference(128,0.1,location_global[0:1,:])
+    ggx = compute_ggx_ndf_reference(128, 0.1, location_global[0:1, :])
     # #
     test_one_texel_full_optimization(location_global[0:1,:],8,ggx)
 

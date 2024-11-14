@@ -136,6 +136,23 @@ def get_all_half_vector_torch_vectorized(v:torch.Tensor,l:torch.Tensor):
     return wh
 
 
+def get_reflected_vector_torch_vectorized(n: torch.Tensor, wi: torch.Tensor):
+    """
+
+    :param n: [N,3]
+    :param wi: [N,3]  in most cases, wi we have is the direction that is pointing outward. Need to negate it
+    :return:
+    """
+    wi_neg = -wi
+    wi_neg = wi_neg / torch.linalg.norm(wi_neg, dim=-1, keepdim=True)
+    n_normalized = n / torch.linalg.norm(n, dim=-1, keepdim=True)
+
+    r = wi_neg - 2 * torch.sum(wi_neg * n_normalized, dim=-1, keepdim=True) * n_normalized
+
+
+    return r
+
+
 def torch_jacobian_vertorized(xyz):
     """
 
@@ -219,9 +236,7 @@ def torch_uv_to_xyz_vectorized(uv:torch.Tensor ,idx, normalize_flag=False):
 
 def torch_normalized(a, axis=-1, order=2):
     # https://stackoverflow.com/a/21032099
-    norm = torch.linalg.norm(a, ord=order, dim = axis)
-
-    norm = torch.stack((norm,norm,norm),dim=axis)
+    norm = torch.linalg.norm(a, ord=order, dim = axis, keepdim = True)
 
     return a / norm
 
@@ -230,7 +245,7 @@ def torch_gen_frame_xyz(faces_xyz, frame_idx):
     The frame xyz is used exclusively in sampling parameters
     The original direction of the texel is considered the Z axis, we note the normal of this face a
     The X axis is cross(a,z)  The y axis is cross(Z,X)
-    :param faces_xyz: (6,res,res,3)
+    :param faces_xyz: (6,res,res,3)??
     :param frame_idx: this affects how we construct the up vector
     :return:
     """
@@ -302,6 +317,33 @@ def torch_gen_theta_phi(faces_xyz,frame_idx, follow_code = False):
 
     return theta,phi,theta2,phi2
 
+
+def torch_gen_frame_xyz_view_dependent(facex_xyz, frame_idx, view_directions):
+    """
+
+    :param faces_xyz:
+    :param frame_idx:
+    :param view_directions: in shape of [N,3]
+    :return:
+
+    view_directions are v,
+    faces_xyz are n
+
+    """
+    reflect_direction = get_reflected_vector_torch_vectorized(facex_xyz, view_directions)
+    Z = torch_normalized(reflect_direction, axis=-1)
+    polar_axis = torch.zeros_like(Z, device=device)
+    if frame_idx == 0 or frame_idx == 1 or frame_idx == 2:
+        polar_axis[..., frame_idx] = 1.0
+    else:
+        raise NotImplementedError
+
+    X = torch_normalized(torch.linalg.cross(polar_axis, Z), axis=-1)
+
+    # This is guaranteed to be unit vector
+    Y = torch.linalg.cross(Z, X)
+
+    return X, Y, Z
 
 
 

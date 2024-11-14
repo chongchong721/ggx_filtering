@@ -4,7 +4,7 @@ import map_util
 import mat_util
 from datetime import datetime
 
-from reference import compute_ggx_distribution_reference,compute_ggx_distribution_reference_torch_vectorized,compute_ggx_distribution_reference_half_vector_torch_vectorized,compute_view_dependent_ggx_distribution_ref_torch_vectorized
+from reference import compute_ggx_ndf_reference,compute_ggx_ndf_reference_torch_vectorized,compute_ggx_ndf_reference_half_vector_torch_vectorized,compute_ggx_ndf_ref_view_dependent_torch_vectorized
 
 import scipy
 import torch
@@ -32,12 +32,15 @@ import reference
 from filter import synthetic_filter_showcase
 
 
-def process_view_option(view_option_str:str):
+def process_view_option(view_option_str:str,view_reflection_parameterization:bool):
     valid_option = ["view_only","even_only",'odd']
     if view_option_str.lower() in valid_option:
         view_dependent = True
     else:
         view_dependent = False
+        if view_reflection_parameterization:
+            print("Warning: Setting view_reflection_parameterization to False has no effect when view_dependent is False")
+
     return view_dependent,view_option_str.lower()
 
 
@@ -60,6 +63,11 @@ def process_cmd():
     parser.add_argument("-f","--nsampleframe",type=int)
     parser.add_argument("-v","--view",type=str,default="None",
                         help='How to parameterize view direction. Choose from view_only/even_only/odd')
+    parser.add_argument("-vreflect", "--view-reflection-parameterization",type=str2bool, nargs='?',
+                        const=True,
+                        default=False,
+                        help='Whether to generate theta phi according to reflected directions'
+                        )
     parser.add_argument("-s", "--shuffle", type=str2bool,
                         nargs='?',
                         const=True,
@@ -119,11 +127,12 @@ def process_cmd():
     ggx_ref_jac_weight = args.jacref
     lr = args.learning_rate
     view_option = args.view
+    view_reflection_parameterization = args.view_reflection_parameterization
 
     if ggx_alpha_input is not None and ggx_level is not None:
         raise ValueError('ggx_alpha and ggx_level cannot be both specified.')
 
-    return n_sample_per_frame,ndir, ggx_level if ggx_level is not None else ggx_alpha_input, constant, adjust_level, optimizer, random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr, view_option
+    return n_sample_per_frame,ndir, ggx_level if ggx_level is not None else ggx_alpha_input, constant, adjust_level, optimizer, random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr, view_option, view_reflection_parameterization
 
 
 
@@ -334,6 +343,242 @@ def multiple_texel_full_optimization_view_dependent_vectorized(n_sample_per_fram
 
 
 
+
+    return result
+
+
+
+
+def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sample_per_frame, n_sample_per_level, ggx_ref_list, weight_list, xyz_list, theta_phi_list, coef_table=None, adjust_level = False, allow_neg_weight = False, device = torch.device('cpu')):
+    #First use coefficient to compute...
+
+    #coefficient [5,3,n_sample_per_frame * 3]
+
+    #theta,phi parameter list([list(theta[200],phi,theta2,phi2)](frame0),[],[])
+
+    #theta and phi convert to tensor of size [3,4,n_sample_per_level]
+    theta_phi_tensor = torch.stack([torch.stack(theta_phi_list[i], dim=0) for i in range(3)], dim=0)
+
+    #theta2 -> [3,n_sample_per_level] phi2 ->[3,n_sample_per_level]
+
+    final_result = torch.empty((5,0))
+
+
+    for frame_idx in range(3):
+        theta2 = theta_phi_tensor[frame_idx,2,:]
+        phi2 = theta_phi_tensor[frame_idx,3,:]
+
+        #e.g. coefficient be in shape [5,2,96], theta2 phi2 be in shape [ 2, n_sample_per_level * 3]
+        # to compute outerproduct, we need coef.unsqueeze(-1)   and theta_phi.unsqueeze(0).unsqueeze(2)
+        # then we have [5,2,96,n_sample_per_level * 3]
+        non_const_coef = coef_table[:, 1:, frame_idx * n_sample_per_frame: frame_idx * n_sample_per_frame + n_sample_per_frame]
+        constant_tmp = coef_table[:,0,frame_idx * n_sample_per_frame: frame_idx * n_sample_per_frame + n_sample_per_frame]
+        constant_tmp = constant_tmp.repeat(1,n_sample_per_level)
+
+        parameter = torch.stack((theta2,phi2))
+
+        outer = non_const_coef.unsqueeze(-1) * parameter.unsqueeze(0).unsqueeze(2)
+
+        #order is dir0-frame0 -> dir1-frame0 -> dir0-frame1 -> dir1-frame1...
+        outer_T = torch.transpose(outer,2,3)
+
+        #outer = outer.view((5,2,n_sample_per_frame * n_sample_per_level))
+        outer_T = outer_T.reshape((5,2,n_sample_per_level * n_sample_per_frame))
+
+
+        test_sum = outer_T[:,0] + outer_T[:,1] + constant_tmp
+
+        final_result = torch.cat((final_result,test_sum),dim=-1)
+
+
+    #exclude those dir/frame pair that has a 0 weight
+    #weight list convert to [3,n_sample_per_level]
+    frame_weight_tensor = torch.stack(weight_list,dim=0).flatten()
+    frame_weight_tensor = torch.repeat_interleave(frame_weight_tensor, n_sample_per_frame, dim=0)
+
+    valid_idx = (frame_weight_tensor != 0.0)
+
+    frame_weight_tensor = frame_weight_tensor[valid_idx]
+
+    final_result = final_result[:,valid_idx]
+
+
+
+    X_tensor = torch.stack( [xyz_list[i][0] for i in range(3)] )
+    Y_tensor = torch.stack( [xyz_list[i][1] for i in range(3)] )
+    Z_tensor = torch.stack( [xyz_list[i][2] for i in range(3)] )
+
+    X_tensor = X_tensor.view(-1,3)
+    Y_tensor = Y_tensor.view(-1,3)
+    Z_tensor = Z_tensor.view(-1,3)
+
+    X_tensor = torch.repeat_interleave(X_tensor, n_sample_per_frame, dim=0)
+    Y_tensor = torch.repeat_interleave(Y_tensor, n_sample_per_frame, dim=0)
+    Z_tensor = torch.repeat_interleave(Z_tensor, n_sample_per_frame, dim=0)
+
+
+    X_tensor = X_tensor[valid_idx,:]
+    Y_tensor = Y_tensor[valid_idx,:]
+    Z_tensor = Z_tensor[valid_idx,:]
+
+    direction = final_result[0,:].view(-1,1) * X_tensor + final_result[1,:].view(-1,1) * Y_tensor + final_result[2,:].view(-1,1) * Z_tensor
+
+    max = torch.max(torch.abs(direction), dim=-1).values
+    direction_map = direction / max.view(-1,1)
+
+    weight_all = final_result[4,:] * frame_weight_tensor
+    level_all = final_result[3,:]
+
+    if not allow_neg_weight:
+        weight_all = torch.clip(weight_all, 0)
+
+
+    # TODO: Jacobian?
+    if adjust_level:
+        j = 3 / 4 * torch.log2(torch_util.torch_dot_vectorized_2D(direction_map, direction_map))
+        adjusted_level_all = level_all + j
+    else:
+        adjusted_level_all = level_all
+
+    adjusted_level_all = torch.clip(adjusted_level_all, 0.0, 6.0)
+
+
+    #create sample_idx pattern
+    sample_idx_all = torch.arange(0, n_sample_per_level, dtype=torch.int)
+    sample_idx_all = sample_idx_all.repeat(3)
+    sample_idx_all = torch.repeat_interleave(sample_idx_all, n_sample_per_frame, dim = 0)
+    sample_idx_all = sample_idx_all[valid_idx]
+
+
+
+
+    # xyz_list -> X -> [3,n_sample_per_level,3] Y->[3,n_sample_per_level,3] Z->[3,n_sample_per_level,3]
+
+    result = torch_util_all_locations.compute_contribution_full(direction_map, adjusted_level_all, weight_all,
+                                                                sample_idx_all, n_level=7,
+                                                                n_sample_per_level=n_sample_per_level)
+
+    return result
+
+
+
+
+
+
+
+
+
+def multiple_texel_full_optimization_vectorized_vec_prepare(n_sample_per_frame, n_sample_per_level, ggx_ref_list, weight_list, xyz_list, theta_phi_list, coef_table=None, constant= False, adjust_level = False, allow_neg_weight = False, device = torch.device('cpu')):
+    if constant:
+        raise NotImplementedError
+
+    #First use coefficient to compute...
+
+    #coefficient [5,3,n_sample_per_frame * 3]
+
+    #theta,phi parameter list([list(theta[200],phi,theta2,phi2)](frame0),[],[])
+
+    #theta and phi convert to tensor of size [3,4,n_sample_per_level]
+    theta_phi_tensor = torch.stack([torch.stack(theta_phi_list[i], dim=0) for i in range(3)], dim=0)
+
+    #theta2 -> [3,n_sample_per_level] phi2 ->[3,n_sample_per_level]
+
+    final_result = torch.empty((5,0))
+
+
+    for frame_idx in range(3):
+        theta2 = theta_phi_tensor[frame_idx,2,:]
+        phi2 = theta_phi_tensor[frame_idx,3,:]
+
+        #e.g. coefficient be in shape [5,2,96], theta2 phi2 be in shape [ 2, n_sample_per_level * 3]
+        # to compute outerproduct, we need coef.unsqueeze(-1)   and theta_phi.unsqueeze(0).unsqueeze(2)
+        # then we have [5,2,96,n_sample_per_level * 3]
+        non_const_coef = coef_table[:, 1:, frame_idx * n_sample_per_frame: frame_idx * n_sample_per_frame + n_sample_per_frame]
+        constant_tmp = coef_table[:,0,frame_idx * n_sample_per_frame: frame_idx * n_sample_per_frame + n_sample_per_frame]
+        constant_tmp = constant_tmp.repeat(1,n_sample_per_level)
+
+        parameter = torch.stack((theta2,phi2))
+
+        outer = non_const_coef.unsqueeze(-1) * parameter.unsqueeze(0).unsqueeze(2)
+
+        #order is dir0-frame0 -> dir1-frame0 -> dir0-frame1 -> dir1-frame1...
+        outer_T = torch.transpose(outer,2,3)
+
+        #outer = outer.view((5,2,n_sample_per_frame * n_sample_per_level))
+        outer_T = outer_T.reshape((5,2,n_sample_per_level * n_sample_per_frame))
+
+
+        test_sum = outer_T[:,0] + outer_T[:,1] + constant_tmp
+
+        final_result = torch.cat((final_result,test_sum),dim=-1)
+
+
+    #exclude those dir/frame pair that has a 0 weight
+    #weight list convert to [3,n_sample_per_level]
+    frame_weight_tensor = torch.stack(weight_list,dim=0).flatten()
+    frame_weight_tensor = torch.repeat_interleave(frame_weight_tensor, n_sample_per_frame, dim=0)
+
+    valid_idx = (frame_weight_tensor != 0.0)
+
+    frame_weight_tensor = frame_weight_tensor[valid_idx]
+
+    final_result = final_result[:,valid_idx]
+
+
+
+    X_tensor = torch.stack( [xyz_list[i][0] for i in range(3)] )
+    Y_tensor = torch.stack( [xyz_list[i][1] for i in range(3)] )
+    Z_tensor = torch.stack( [xyz_list[i][2] for i in range(3)] )
+
+    X_tensor = X_tensor.view(-1,3)
+    Y_tensor = Y_tensor.view(-1,3)
+    Z_tensor = Z_tensor.view(-1,3)
+
+    X_tensor = torch.repeat_interleave(X_tensor, n_sample_per_frame, dim=0)
+    Y_tensor = torch.repeat_interleave(Y_tensor, n_sample_per_frame, dim=0)
+    Z_tensor = torch.repeat_interleave(Z_tensor, n_sample_per_frame, dim=0)
+
+
+    X_tensor = X_tensor[valid_idx,:]
+    Y_tensor = Y_tensor[valid_idx,:]
+    Z_tensor = Z_tensor[valid_idx,:]
+
+    direction = final_result[0,:].view(-1,1) * X_tensor + final_result[1,:].view(-1,1) * Y_tensor + final_result[2,:].view(-1,1) * Z_tensor
+
+    max = torch.max(torch.abs(direction), dim=-1).values
+    direction_map = direction / max.view(-1,1)
+
+    weight_all = final_result[4,:] * frame_weight_tensor
+    level_all = final_result[3,:]
+
+    if not allow_neg_weight:
+        weight_all = torch.clip(weight_all, 0)
+
+
+    # TODO: Jacobian?
+    if adjust_level:
+        j = 3 / 4 * torch.log2(torch_util.torch_dot_vectorized_2D(direction_map, direction_map))
+        adjusted_level_all = level_all + j
+    else:
+        adjusted_level_all = level_all
+
+    adjusted_level_all = torch.clip(adjusted_level_all, 0.0, 6.0)
+
+
+    #create sample_idx pattern
+    sample_idx_all = torch.arange(0, n_sample_per_level, dtype=torch.int)
+    sample_idx_all = sample_idx_all.repeat(3)
+    sample_idx_all = torch.repeat_interleave(sample_idx_all, n_sample_per_frame, dim = 0)
+    sample_idx_all = sample_idx_all[valid_idx]
+
+
+
+
+    # xyz_list -> X -> [3,n_sample_per_level,3] Y->[3,n_sample_per_level,3] Z->[3,n_sample_per_level,3]
+
+    result = torch_util_all_locations.compute_contribution_full(direction_map, adjusted_level_all, weight_all,
+                                                                sample_idx_all, n_level=7,
+                                                                n_sample_per_level=n_sample_per_level)
 
     return result
 
@@ -671,7 +916,26 @@ def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_re
     return e, result
 
 
+def precompute_opt_info_view_dependent(texel_directions,n_sample_per_level,view_directions,view_thetas, use_reflected_dirs_as_parameter):
+    weight_per_frame = []
+    xyz_per_frame = []
+    theta_phi_per_frame = []
 
+    for frame_idx in range(3):
+        frame_xyz = torch_util.torch_gen_frame_xyz_view_dependent(texel_directions, frame_idx, view_directions)
+        frame_weight = torch_util.torch_gen_frame_weight(frame_xyz[-1], frame_idx)
+        if use_reflected_dirs_as_parameter:
+            frame_theta_phi = torch_util.torch_gen_theta_phi(frame_xyz[-1],frame_idx)
+        else:
+            frame_theta_phi = torch_util.torch_gen_theta_phi(texel_directions, frame_idx)
+
+        weight_per_frame.append(frame_weight)
+        xyz_per_frame.append(frame_xyz)
+        theta_phi_per_frame.append(frame_theta_phi)
+
+    view_theta_list = (view_thetas,view_thetas**2)
+
+    return weight_per_frame, xyz_per_frame, theta_phi_per_frame, view_theta_list
 
 
 def precompute_opt_info(texel_directions, n_sample_per_level):
@@ -698,16 +962,19 @@ def precompute_opt_info(texel_directions, n_sample_per_level):
     return weight_per_frame, xyz_per_frame, theta_phi_per_frame
 
 
-def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False, vectorize = True, optimizer_type = "adam", random_shuffle = False, allow_neg_weight = False, ggx_ref_jac_weight = False, learning_rate = 1e-4, view_option_str = "None"):
+def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False,
+                                vectorize = True, optimizer_type = "adam", random_shuffle = False, allow_neg_weight = False,
+                                ggx_ref_jac_weight = False, learning_rate = 1e-4, view_option_str = "None"
+                                ,view_reflection_parameterization = False):
     """
-    To speed up, a lot of things can be precomputed, including the relative XYZ,the frame weight
+    To speed up, a lot of things can be precomputed, including the relative XYZ,the frame weight_g
     we don't have to compute this in every iteration
     :param n_sample_per_level:
     :return:
     """
     device = get_device()
 
-    view_dependent, view_option_str = process_view_option(view_option_str)
+    view_dependent, view_option_str = process_view_option(view_option_str, view_reflection_parameterization)
 
     view_model_dict = {
         "even_only":torch_util.QuadModel_View_EvenOnly,
@@ -720,7 +987,11 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
     logger = logging.getLogger(__name__)
 
-    log_name = map_util.log_filename(ggx_alpha,n_sample_per_frame,n_sample_per_level,constant,adjust_level,optimizer_type,random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight, ggx_ref_jac_weight=ggx_ref_jac_weight, view_dependent=view_dependent, view_option_str=view_option_str)
+    log_name = map_util.log_filename(ggx_alpha,n_sample_per_frame,n_sample_per_level,constant,adjust_level,optimizer_type,
+                                     random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight,
+                                     ggx_ref_jac_weight=ggx_ref_jac_weight,
+                                     view_dependent=view_dependent, view_option_str=view_option_str
+                                     ,reflection_parameterization=view_reflection_parameterization)
     log_name = "./logs/" + log_name
 
     logging.basicConfig(filename=log_name, filemode='a', level=logging.INFO,
@@ -731,7 +1002,8 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
         rng = np.random.default_rng(12345)
         dir_name = map_util.dir_filename(ggx_alpha, constant, n_sample_per_frame, n_sample_per_level, adjust_level,
                                          optimizer_type, allow_neg_weight=allow_neg_weight,
-                                         ggx_ref_jac_weight=ggx_ref_jac_weight, view_dependent=view_dependent,view_option_str=view_option_str)
+                                         ggx_ref_jac_weight=ggx_ref_jac_weight, view_dependent=view_dependent,view_option_str=view_option_str
+                                         ,reflection_parameterization=view_reflection_parameterization)
         if view_dependent:
             view_dirs, view_theta, all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level, torch.Generator(device=device))
             torch.save(torch.concatenate(view_dirs,all_locations_cube),dir_name)
@@ -750,7 +1022,11 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             all_locations_cube,all_locations = torch_util.sample_location(n_sample_per_level,rng)
 
 
-    model_name = map_util.model_filename(ggx_alpha,constant,n_sample_per_frame,n_sample_per_level,adjust_level,optimizer_type, random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight, ggx_ref_jac_weight=ggx_ref_jac_weight, view_dependent=view_dependent, view_option_str=view_option_str)
+    model_name = map_util.model_filename(ggx_alpha,constant,n_sample_per_frame,n_sample_per_level,adjust_level,optimizer_type,
+                                         random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight,
+                                         ggx_ref_jac_weight=ggx_ref_jac_weight,
+                                         view_dependent=view_dependent, view_option_str=view_option_str,
+                                         reflection_parameterization=view_reflection_parameterization)
 
 
     if view_dependent:
@@ -782,21 +1058,28 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
 
     if view_dependent:
-        ref_list_global = compute_view_dependent_ggx_distribution_ref_torch_vectorized(128, all_locations,
-                                                                                       tex_directions_res,
-                                                                                       tex_directions_res_map,
-                                                                                       view_dirs, ggx_ref_jac_weight)
+        ref_list_global = compute_ggx_ndf_ref_view_dependent_torch_vectorized(128, all_locations,
+                                                                              tex_directions_res,
+                                                                              tex_directions_res_map,
+                                                                              view_dirs, ggx_ref_jac_weight)
     else:
-        ref_list_global = compute_ggx_distribution_reference_half_vector_torch_vectorized(128, ggx_alpha, all_locations,tex_directions_res,tex_directions_res_map,ggx_ref_jac_weight)
+        ref_list_global = compute_ggx_ndf_reference_half_vector_torch_vectorized(128, ggx_alpha, all_locations, tex_directions_res, tex_directions_res_map, ggx_ref_jac_weight)
+
+
+
+    #test code
+    torch_util.torch_gen_frame_xyz_view_dependent(all_locations_cube, 0, view_dirs)
 
 
 
 
-    weight_per_frame_global,xyz_per_frame_global,theta_phi_per_frame_global = precompute_opt_info(all_locations_cube, n_sample_per_level)
     #view_cos_theta_global = torch.sum(view_dirs * all_locations, dim=1)
-    view_theta_global = view_theta
-    view_theta2_global = view_theta_global ** 2
-    view_theta_list_global = (view_theta_global,view_theta2_global)
+    if view_dependent:
+        weight_per_frame_global,xyz_per_frame_global,theta_phi_per_frame_global,view_theta_list_global = precompute_opt_info_view_dependent(all_locations_cube,
+                                                                                                                                            n_sample_per_level,view_dirs,view_theta,view_reflection_parameterization)
+    else:
+        weight_per_frame_global, xyz_per_frame_global, theta_phi_per_frame_global = precompute_opt_info(all_locations_cube, n_sample_per_level)
+
 
     if optimizer_type == "adam":
         optimizer = optim.Adam(model.parameters(), lr= learning_rate)
@@ -821,15 +1104,16 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             else:
                 view_dirs,view_theta,all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level, rng)
             #new parameter
-            weight_per_frame, xyz_per_frame, theta_phi_per_frame = precompute_opt_info(all_locations_cube,
-                                                                                       n_sample_per_level)
+
             #new reference
             if not view_dependent:
-                ref_list = compute_ggx_distribution_reference_half_vector_torch_vectorized(128,ggx_alpha,all_locations,tex_directions_res,tex_directions_res_map,ggx_ref_jac_weight)
+                weight_per_frame, xyz_per_frame, theta_phi_per_frame = precompute_opt_info(all_locations_cube,
+                                                                                           n_sample_per_level)
+                ref_list = compute_ggx_ndf_reference_half_vector_torch_vectorized(128, ggx_alpha, all_locations, tex_directions_res, tex_directions_res_map, ggx_ref_jac_weight)
             else:
-                ref_list = compute_view_dependent_ggx_distribution_ref_torch_vectorized(128, all_locations,tex_directions_res,tex_directions_res_map,view_dirs,ggx_ref_jac_weight)
-                view_theta2 = view_theta ** 2
-                view_theta_list = (view_theta, view_theta2)
+                ref_list = compute_ggx_ndf_ref_view_dependent_torch_vectorized(128, all_locations, tex_directions_res, tex_directions_res_map, view_dirs, ggx_ref_jac_weight)
+                weight_per_frame, xyz_per_frame, theta_phi_per_frame,view_theta_list = precompute_opt_info_view_dependent(all_locations_cube,
+                                                                                           n_sample_per_level, view_dirs, view_theta, view_reflection_parameterization)
 
             ref_list = ref_list.reshape(ref_list.shape + (1,))
             ref_list = ref_list / torch.sum(ref_list,dim=(1,2,3,4),keepdim=True)
@@ -853,6 +1137,13 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                 view_theta_list = view_theta_list_global
         if vectorize:
             if not view_dependent:
+                # test = multiple_texel_full_optimization_vectorized_vec_prepare(n_sample_per_frame,
+                #                                                                      n_sample_per_level, ref_list,
+                #                                                                      weight_per_frame, xyz_per_frame,
+                #                                                                      theta_phi_per_frame, params,
+                #                                                                      constant, adjust_level, allow_neg_weight, device)
+
+
                 tmp_pushed_back_result = multiple_texel_full_optimization_vectorized(n_sample_per_frame,
                                                                                      n_sample_per_level, ref_list,
                                                                                      weight_per_frame, xyz_per_frame,
@@ -962,7 +1253,7 @@ def optimize_function():
     u,v = 0.8,0.2
     location_global = map_util.uv_to_xyz((u, v), face)
     location_global = location_global.reshape((1, -1))
-    ggx_ref = compute_ggx_distribution_reference(128,ggx_alpha,location_global)
+    ggx_ref = compute_ggx_ndf_reference(128, ggx_alpha, location_global)
     location_global = torch.from_numpy(location_global)
     ggx_ref = torch.from_numpy(ggx_ref)
     #normalize GGX
@@ -1323,7 +1614,7 @@ def multiple_texel_full_optimization_parallel_cuda(n_sample_per_frame, n_sample_
     ref_list = []
     for i in range(n_sample_per_level):
         location = all_locations[i, :]
-        ggx_ref = compute_ggx_distribution_reference(128, ggx_alpha, location)
+        ggx_ref = compute_ggx_ndf_reference(128, ggx_alpha, location)
         ggx_ref = torch.from_numpy(ggx_ref)
         ggx_ref /= torch.sum(ggx_ref)
         ref_list.append(ggx_ref)
@@ -1444,7 +1735,7 @@ def test_vectorized_multiple_opt(ggx_alpha):
     ref_list = []
     for i in range(n_sample_per_level):
         location = all_locations[i,:]
-        ggx_ref = compute_ggx_distribution_reference(128, ggx_alpha, location)
+        ggx_ref = compute_ggx_ndf_reference(128, ggx_alpha, location)
         ggx_ref = torch.from_numpy(ggx_ref).to(device)
         ggx_ref /= torch.sum(ggx_ref)
         ref_list.append(ggx_ref)
@@ -1486,7 +1777,7 @@ def test_vectorized_multiple_opt(ggx_alpha):
 if __name__ == "__main__":
     print("CUDA Availability:",torch.cuda.is_available())
 
-    n_sample_per_frame,n_sample_per_level, ggx_info, flag_constant, flag_adjust_level, optimizer_string, random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr, view_option =  process_cmd()
+    n_sample_per_frame,n_sample_per_level, ggx_info, flag_constant, flag_adjust_level, optimizer_string, random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr, view_option, view_reflection_parameterization_g =  process_cmd()
     #
     if isinstance(ggx_info, int):
         import specular
@@ -1501,7 +1792,8 @@ if __name__ == "__main__":
           "random shuffle:{}\n"
           "Allow negative weight:{},\n"
           "Use Jacobian weighted ggx as reference:{}\n"
-          "View dependency Option:{}".format(ggx_alpha,n_sample_per_level,n_sample_per_frame,flag_adjust_level,flag_constant,optimizer_string,lr,random_shuffle,allow_neg_weight, ggx_ref_jac_weight,view_option))
+          "View dependency Option:{}\n"
+          "Parameterize using reflected direction:{}".format(ggx_alpha,n_sample_per_level,n_sample_per_frame,flag_adjust_level,flag_constant,optimizer_string,lr,random_shuffle,allow_neg_weight, ggx_ref_jac_weight,view_option,view_reflection_parameterization_g))
 
     # #test_vectorized_multiple_opt(ggx_alpha)
     #
@@ -1515,7 +1807,10 @@ if __name__ == "__main__":
 
     #t = create_downsample_pattern(130)
     #t = torch_uv_to_xyz_vectorized(t,0)
-    optimize_multiple_locations(n_sample_per_level,flag_constant,n_sample_per_frame, ggx_alpha, adjust_level=flag_adjust_level,vectorize=True, optimizer_type=optimizer_string, random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight, ggx_ref_jac_weight=ggx_ref_jac_weight, view_option_str=view_option ,learning_rate=lr)
+    optimize_multiple_locations(n_sample_per_level,flag_constant,n_sample_per_frame, ggx_alpha, adjust_level=flag_adjust_level,
+                                vectorize=True, optimizer_type=optimizer_string, random_shuffle=random_shuffle,
+                                allow_neg_weight=allow_neg_weight, ggx_ref_jac_weight=ggx_ref_jac_weight,
+                                view_option_str=view_option ,learning_rate=lr,view_reflection_parameterization=view_reflection_parameterization_g)
     #optimize_function()
 
     # dummy location

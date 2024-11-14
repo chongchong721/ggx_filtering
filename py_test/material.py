@@ -443,3 +443,428 @@ class GGX:
         sa_cube = 4 * jacobian_vertorized(samples_map) / (res ** 2)
         mip_level = 0.5 * (np.log2(sa_is/sa_cube))
         return mip_level
+
+
+
+class VNDFSamplerGGX:
+    rng = None
+    ggx = None
+
+    def __init__(self, ax, ay, eta_i=1.0, eta_t=1.0, seed=int(time.time()), external_randomnumber=False, half_diff_pdf = False):
+        """
+        half_diff_pdf : if true, pdf will account for the Jacobian to theta_h,theta_d,phi_d. This is used if we want to
+        importance sampling with respect to half-diff coordinate
+        """
+        #self.rng = np.random.default_rng(seed)
+        self.ggx = GGX(ax, ay, eta_i, eta_t)
+        self.half_diff_pdf = half_diff_pdf
+
+    # The distribution of VNDF, is basically given you a theta_i,phi_i, what is the distribution of theta_m,phi_m
+    # Distribution of anisotropic GGX:
+    # https://www.pbr-book.org/3ed-2018/Reflection_Models/Microfacet_Models
+
+    # https://computergraphics.stackexchange.com/questions/8555/anisotropic-ggx-brdf-implementation-how-is-it-related-to-isotropic-ggx-brdf
+    # 1 / a^2 = cos^2{\phi} / ax^2 + sin^2{\phi} / ay^2 for isotropic case
+    # Sample a GGX distribution of slopes with roughness(\alpha) = 1 given an incident cosine, we assume the phi is (x,0)
+    # since we are sampling isotropic distribution, phi does not matter.
+    def sample_ggx(self, theta_i):
+        u, v = self.rng.random(2)
+
+        # Special case ?
+        if theta_i < 0.0001:
+            r = np.sqrt(u / (1 - u))
+            phi = np.pi * 2 * v
+            return r * np.cos(phi), r * np.sin(phi)
+
+        # Precomputation
+        tan_theta = np.tan(theta_i)
+        a = 1 / tan_theta
+        g1 = 2 / (1 + np.sqrt(1 + 1.0 / (a * a)))
+
+        # slope X
+        A = 2 * u / g1 - 1
+        tmp = 1.0 / (A * A - 1)
+        B = tan_theta
+        D = np.sqrt(B * B * tmp * tmp - (A * A - B * B) * tmp)
+        slope_x_1 = B * tmp - D
+        slope_x_2 = B * tmp + D
+        if A < 0 or slope_x_2 > 1.0 / tan_theta:
+            slope_x = slope_x_1
+        else:
+            slope_x = slope_x_2
+
+        # sample y
+        if v > 0.5:
+            S = 1.0
+            v = 2.0 * (v - 0.5)
+        else:
+            S = -1.0
+            v = 2.0 * (0.5 - v)
+
+        z = (v * (v * (v * 0.27385 - 0.73369) + 0.46341)) / (v * (v * (v * 0.093073 + 0.309420) - 1.000000) + 0.597999)
+        slope_y = S * z * np.sqrt(1.0 + slope_x * slope_x)
+        return slope_x, slope_y
+
+    def slope_to_normal(self, slope_x, slope_y):
+        norm = np.sqrt(slope_x * slope_x + slope_y * slope_y + 1)
+        normal = np.array([[-slope_x.item()], [-slope_y.item()], [1.0]])
+        normal = normal / norm
+        return normal
+
+    # A newer version of VNDF sampling
+    # See https://jcgt.org/published/0007/04/01/
+    def sample_anisotropic_ggx_new(self,wi, samples = None):
+        ax = self.ggx.ax
+        ay = self.ggx.ay
+
+        if samples is None:
+            u, v = self.rng.random(2)
+        else:
+            u, v = samples[0],samples[1]
+
+        Vh = mat_util.makeVector(ax * wi[0][0],ay * wi[1][0],wi[2][0])
+        Vh /= mat_util.norm_3D(Vh)
+
+        lensq = Vh[0][0] ** 2 + Vh[1][0] ** 2
+
+        if lensq > 0.0:
+            T1 = mat_util.makeVector(-Vh[1][0],Vh[0][0],0)
+            T1 = T1 / math.sqrt(lensq)
+        else:
+            T1 = mat_util.makeVector(1.0,0.0,0.0)
+
+        #T2 = np.cross(Vh.T, T1.T).T
+
+        T2 = mat_util.cross_3D(Vh,T1)
+
+        r = np.sqrt(u)
+        phi = np.pi * 2 * v
+
+        t1 = r * math.cos(phi)
+        t2 = r * math.sin(phi)
+
+        s = 0.5 * (1.0 + Vh[2][0])
+        t2 = (1.0 - s) * math.sqrt(1.0 - t1 ** 2) + s * t2
+
+        Nh = t1 * T1 + t2 * T2 + math.sqrt(max(0.0,1.0-t1*t1-t2*t2)) * Vh
+
+        Ne = mat_util.makeVector(ax * Nh[0][0],ay * Nh[1][0],max(0.0,Nh[2][0]))
+        Ne /= mat_util.norm_3D(Ne)
+
+        return Ne
+
+
+
+
+    # Add stretch,rotation to make this ggx sample work in all cases
+    def sample_anisotropic_ggx(self, wi):
+        # stretch
+        stretch_wi = np.array([[0.0], [0.0], [0.0]])
+        stretch_wi[0] = self.ggx.ax * wi[0]
+        stretch_wi[1] = self.ggx.ay * wi[1]
+        stretch_wi[2] = wi[2]
+
+        stretch_wi = stretch_wi / np.linalg.norm(stretch_wi)
+        theta, phi = mat_util.to_spherical(stretch_wi)
+
+        # sample
+        slope_x, slope_y = self.sample_ggx(theta)
+
+        # rotate
+        tmp = np.cos(phi) * slope_x - np.sin(phi) * slope_y
+        slope_y = np.sin(phi) * slope_x + np.cos(phi) * slope_y
+        slope_x = tmp
+
+        # unstretch
+        slope_x = self.ggx.ax * slope_x
+        slope_y = self.ggx.ay * slope_y
+
+        return self.slope_to_normal(slope_x, slope_y)
+
+    # According to adaptive paper.
+    # w_i is sampled from the distribution of the VNDF. Need to sample theta/phi separately
+    # theta_i is sampled from the distribution of projected area (marginal-conditional)
+    # phi_i is sampled from distribution of VNDF where wi=(0,0,1)
+    def sample_wi(self):
+        wz = np.array([[0.0], [0.0], [1.0]])
+        wm = self.sample_anisotropic_ggx(wz)
+
+        # this is the phi for incident rays, also the phi we used to sample theta
+        tmp, phi = mat_util.to_spherical(wm)
+
+        u = self.rng.random()
+
+        # cdf[idx-1] < u <= cdf[idx]
+        idx = np.searchsorted(self.ggx.cdf, u, side='left')
+
+        stride_theta = np.pi / 2 / len(self.ggx.cdf)
+
+        if idx == 0:
+            theta = 0
+        else:
+            a = self.ggx.cdf[idx - 1]
+            b = self.ggx.cdf[idx]
+            theta_a = stride_theta * idx
+            theta_b = stride_theta * (idx + 1)
+            theta = mat_util.lerp(theta_a, theta_b, (b - u) / (b - a))
+
+        wi = mat_util.to_cartesian(theta, phi)
+        return wi
+
+    # pdf of sampling cos(theta)
+    def wi_u_pdf(self,theta):
+        u = np.cos(theta)
+        stride_u = 1 / (len(self.ggx.cdf) - 1)
+        left_idx = int(np.floor(u / stride_u))
+        right_idx = int(np.ceil(u / stride_u))
+        left = left_idx * stride_u
+        right = right_idx * stride_u
+        pdf_left = self.ggx.pdf[left_idx]
+        pdf_right = self.ggx.pdf[right_idx]
+        return mat_util.lerp(pdf_left,pdf_right,(right - u) / (right - left))
+
+    # For isotropic cases only
+    def sample_wi_u(self, samples = None):
+        if samples is None:
+            u, v = self.rng.random(2)
+        else:
+            u, v = samples[0],samples[1]
+        phi = v * np.pi * 2
+        stride_u = 1 / (len(self.ggx.cdf)-1)
+        idx = np.searchsorted(self.ggx.cdf, u, side='left')
+
+        if idx == 0:
+            u_sample = 0
+            pdf_sample = self.ggx.pdf[0]
+        else:
+            a = self.ggx.cdf[idx - 1]
+            b = self.ggx.cdf[idx]
+            pdf_a = self.ggx.pdf[idx - 1]
+            pdf_b = self.ggx.pdf[idx]
+            u_a = stride_u * (idx - 1)
+            u_b = stride_u * idx
+            u_sample = mat_util.lerp(u_a, u_b, (b - u) / (b - a))
+            pdf_sample = mat_util.lerp(pdf_a,pdf_b,(b-u)/(b-a))
+
+        theta = np.arccos(u_sample)
+
+        #return mat_util.to_cartesian(theta,phi),pdf_sample * (1 / (2 * np.pi))
+        return mat_util.to_cartesian(theta, phi)
+
+    def sample(self):
+        wi = self.sample_wi()
+        wm = self.sample_anisotropic_ggx(wi)
+        wo = mat_util.reflect(-wi, wm)
+        return wi, wo
+
+    def sample_wo(self, wi, samples = None):
+        #wm = self.sample_anisotropic_ggx(wi)
+        wm = self.sample_anisotropic_ggx_new(wi, samples)
+        wo = mat_util.reflect(-wi, wm)
+
+        pdf = self.ggx.vndf(wi, wm) * (0.25 / mat_util.dot(wo, wm))
+
+        return wo, pdf
+
+    def sample_wi_uniform(self, samples = None):
+        if samples is None:
+            u,v = self.rng.random(2)
+        else:
+            u,v = samples[0],samples[1]
+        wi = mat_util.random_uniform_hemisphere(u,v)
+        return wi
+
+    def pdf(self, wi, wo, wm=None):
+        if wm is None:
+            wm = mat_util.get_half_vector(wi, wo)
+
+        # Which one is correct?
+        # return self.ggx.vndf(wi, wm) * (4 * mat_util.dot(wo, wm))
+        return self.ggx.vndf(wi, wm) / (4 * mat_util.dot(wo, wm))
+
+
+    def pdf_wi(self,wi):
+        theta,phi = mat_util.to_spherical(wi)
+        wi_pdf = self.wi_u_pdf(theta) * (1 / (2 * np.pi))
+        return wi_pdf
+
+    def pdf_wi_uniform(self,wi):
+        return 1 / (np.pi * 2)
+
+    def pdf_wo(self,wi,wo,wm):
+        wo_pdf = self.ggx.vndf(wi, wm) / np.max([1e-6, (4 * math.fabs(mat_util.dot(wo, wm)))])
+        return wo_pdf
+
+    #pdf of perturbing both wi and wo
+    def pdf_full(self,wi,wo,wm = None):
+        if wm is None:
+            wm = mat_util.get_half_vector(wi, wo)
+        wo_pdf = self.pdf_wo(wi,wo,wm)
+        wi_pdf = self.pdf_wi(wi)
+        return wi_pdf * wo_pdf
+
+    def pdf_full_uniform_wi(self,wi,wo,wm = None):
+        if wm is None:
+            wm = mat_util.get_half_vector(wi,wo)
+        wo_pdf = self.pdf_wo(wi,wo,wm)
+        wi_pdf = self.pdf_wi_uniform(wi)
+
+        product = wo_pdf * wi_pdf
+
+        if not self.half_diff_pdf:
+            return product
+        else:
+            # 4 * cos(theta_d)
+            cos_td = mat_util.dot(wo,wm)
+            sin_td = np.sqrt(1 - cos_td ** 2)
+            dwo_dwh = 4 * cos_td
+            result = product * dwo_dwh * sin_td * np.sqrt(1 - wm[2][0]**2)
+            return result
+
+    def pdf_wh(self, wi, wm):
+        return self.ggx.vndf(wi,wm)
+
+
+
+def rotate_vector_to_up(N, V, eps=1e-8):
+    """
+    Rotates vector V by the rotation that aligns N with the up vector (0,0,1).
+
+    Args:
+        N (np.ndarray): Normal vector of shape (3,).
+        V (np.ndarray): Vector to be rotated of shape (3,).
+        eps (float): Small epsilon value to handle numerical stability.
+
+    Returns:
+        np.ndarray: Rotated vector V' of shape (3,).
+    """
+    # Ensure N and V are numpy arrays
+    N = np.asarray(N, dtype=np.float64)
+    V = np.asarray(V, dtype=np.float64)
+
+    # Normalize N and V
+    N_norm = N / (np.linalg.norm(N) + eps)
+    V_norm = V / (np.linalg.norm(V) + eps)
+
+    # Target up vector
+    T = np.array([0.0, 0.0, 1.0])
+
+    # Compute cross product and dot product
+    cross = np.cross(N_norm, T)
+    cross_norm = np.linalg.norm(cross)
+
+    dot = np.dot(N_norm, T)
+
+    # Check if N is already aligned with T
+    if cross_norm < eps:
+        if dot > 0:
+            # N is already aligned with T
+            R = np.eye(3)
+        else:
+            # N is opposite to T, rotate 180 degrees around x-axis
+            R = np.array([
+                [1.0,  0.0,  0.0],
+                [0.0, -1.0,  0.0],
+                [0.0,  0.0, -1.0]
+            ])
+    else:
+        # Compute rotation axis (k) and angle (theta)
+        k = cross / cross_norm
+        theta = np.arccos(np.clip(dot, -1.0, 1.0))
+
+        # Skew-symmetric matrix K
+        K = np.array([
+            [0.0,    -k[2],  k[1]],
+            [k[2],   0.0,   -k[0]],
+            [-k[1],  k[0],   0.0]
+        ])
+
+        # Rodrigues' rotation formula
+        R = np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * np.dot(K, K)
+
+    # Apply rotation
+    V_rot = np.dot(R, V_norm)
+    return V_rot
+
+
+
+
+def rotate_vectors_to_up_batch(N_batch, V_batch, eps=1e-8):
+    """
+    Rotates a batch of vectors V_batch by the rotation that aligns each N_batch with the up vector (0,0,1).
+
+    Args:
+        N_batch (np.ndarray): Batch of normal vectors of shape (B, 3).
+        V_batch (np.ndarray): Batch of vectors to be rotated of shape (B, 3).
+        eps (float): Small epsilon value to handle numerical stability.
+
+    Returns:
+        np.ndarray: Rotated vectors V' of shape (B, 3).
+    """
+    # Ensure inputs are numpy arrays
+    N_batch = np.asarray(N_batch, dtype=np.float64)
+    V_batch = np.asarray(V_batch, dtype=np.float64)
+
+    # Normalize N and V
+    N_norm = N_batch / (np.linalg.norm(N_batch, axis=1, keepdims=True) + eps)
+    V_norm = V_batch / (np.linalg.norm(V_batch, axis=1, keepdims=True) + eps)
+
+    # Target up vector
+    T = np.array([0.0, 0.0, 1.0])
+
+    # Compute cross and dot products
+    cross = np.cross(N_norm, T)  # Shape: (B, 3)
+    cross_norm = np.linalg.norm(cross, axis=1)  # Shape: (B,)
+
+    dot = np.einsum('ij,j->i', N_norm, T)  # Shape: (B,)
+
+    # Initialize rotation matrices as identity
+    B = N_batch.shape[0]
+    R = np.tile(np.eye(3), (B, 1, 1))  # Shape: (B, 3, 3)
+
+    # Handle cases where cross_norm is not near zero
+    mask = cross_norm > eps  # Shape: (B,)
+
+    if np.any(mask):
+        # Rotation axis k and angle theta
+        k = cross[mask] / cross_norm[mask, np.newaxis]  # Shape: (M, 3)
+        theta = np.arccos(np.clip(dot[mask], -1.0, 1.0))  # Shape: (M,)
+
+        # Skew-symmetric matrices K
+        K = np.zeros((k.shape[0], 3, 3))
+        K[:, 0, 1] = -k[:, 2]
+        K[:, 0, 2] =  k[:, 1]
+        K[:, 1, 0] =  k[:, 2]
+        K[:, 1, 2] = -k[:, 0]
+        K[:, 2, 0] = -k[:, 1]
+        K[:, 2, 1] =  k[:, 0]
+
+        # Compute Rodrigues' rotation matrices
+        I = np.tile(np.eye(3), (k.shape[0], 1, 1))  # Shape: (M, 3, 3)
+        R_rot = I + np.sin(theta)[:, np.newaxis, np.newaxis] * K + \
+                (1 - np.cos(theta))[:, np.newaxis, np.newaxis] * np.matmul(K, K)
+
+        # Assign rotation matrices
+        R[mask] = R_rot
+
+    # Handle cases where cross_norm is near zero
+    mask_identity = ~mask  # Shape: (B,)
+    if np.any(mask_identity):
+        # For these cases, check if N is aligned or opposite to T
+        # If dot >0: already aligned, R is identity
+        # If dot <0: rotate 180 degrees around x-axis
+        mask_opposite = (dot < -0.9999) & mask_identity  # Shape: (B,)
+        if np.any(mask_opposite):
+            # Define 180-degree rotation around x-axis
+            R_opposite = np.array([
+                [1.0,  0.0,  0.0],
+                [0.0, -1.0,  0.0],
+                [0.0,  0.0, -1.0]
+            ])  # Shape: (3, 3)
+            R[mask_opposite] = R_opposite
+
+        # No action needed for already aligned vectors (R remains identity)
+
+    # Apply rotation matrices to V
+    V_rot = np.einsum('bij,bj->bi', R, V_norm)  # Shape: (B, 3)
+    return V_rot

@@ -9,6 +9,23 @@ chan_count = 1
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 #device = torch.device('cpu')
 
+texel_dir_128_torch_map = torch.from_numpy(map_util.texel_directions(128).astype(np.float32))
+texel_dir_128_torch = texel_dir_128_torch_map / torch.linalg.norm(texel_dir_128_torch_map, dim=-1, keepdim=True)
+
+
+class QuadModel_View_Reflection_Norm(torch.nn.Module):
+    """
+    Use both the reflection direction and the normal direction + view_theta
+    Direction determined by c0 + c1 * theta_normal^2 + c2 * phi_normal^2
+                               + c3 * theta_reflection^2 + c4 * phi_reflection^2
+                               + c5 * theta_view^2 + c6 * theta_view
+    """
+    def __init__(self, n_sample_per_frame):
+        super(QuadModel_View_Reflection_Norm, self).__init__()
+        self.params = torch.nn.Parameter(torch.rand(5,7,3*n_sample_per_frame), requires_grad=True)
+    def forward(self):
+        return self.params
+
 
 class QuadModel_View_Odd(torch.nn.Module):
     """
@@ -1197,6 +1214,26 @@ def sample_location(n_sample_per_level, g = None):
     xyz = random_dir_sphere(uv,n_sample_per_level)
     xyz_cube = dir_to_cube_coordinate(xyz)
     return xyz_cube,xyz
+
+
+
+def clip_below_horizon_part_view_dependent(normal_directions, result):
+    """
+    texel_dir are the lighting direction. We already make sure that viewing will never get below horizon
+
+    :param normal_directions: [N,3]
+    :param result: [N,6,128,128]
+    :return:
+    """
+    n = normal_directions.shape[0]
+    normal_reshaped = normal_directions.view(n,1,1,1,3)
+    element_wise_sum = normal_reshaped * texel_dir_128_torch.unsqueeze(0)
+    cosine = torch.sum(element_wise_sum,dim=-1)
+    result_clipped = torch.where(cosine > 0, result, 0.0)
+    return result_clipped
+
+
+
 
 
 if __name__ == '__main__':

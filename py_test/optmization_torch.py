@@ -33,7 +33,7 @@ from filter import synthetic_filter_showcase
 
 
 def process_view_option(view_option_str:str,view_reflection_parameterization:bool):
-    valid_option = ["view_only","even_only",'odd']
+    valid_option = ["view_only","even_only",'odd',"reflect_norm"]
     if view_option_str.lower() in valid_option:
         view_dependent = True
     else:
@@ -349,7 +349,7 @@ def multiple_texel_full_optimization_view_dependent_vectorized(n_sample_per_fram
 
 
 
-def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sample_per_frame, n_sample_per_level, ggx_ref_list, weight_list, xyz_list, theta_phi_list, coef_table=None, adjust_level = False, allow_neg_weight = False, device = torch.device('cpu')):
+def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sample_per_frame, n_sample_per_level, ggx_ref_list, weight_list, xyz_list, theta_phi_normal_list, theta_phi_reflection_list ,view_theta_list ,coef_table=None, adjust_level = False, allow_neg_weight = False, view_option_str = 'None' ,device = torch.device('cpu')):
     #First use coefficient to compute...
 
     #coefficient [5,3,n_sample_per_frame * 3]
@@ -357,16 +357,18 @@ def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sam
     #theta,phi parameter list([list(theta[200],phi,theta2,phi2)](frame0),[],[])
 
     #theta and phi convert to tensor of size [3,4,n_sample_per_level]
-    theta_phi_tensor = torch.stack([torch.stack(theta_phi_list[i], dim=0) for i in range(3)], dim=0)
+    theta_phi_normal_tensor = torch.stack([torch.stack(theta_phi_normal_list[i], dim=0) for i in range(3)], dim=0)
+    theta_phi_reflection_tensor = torch.stack([torch.stack(theta_phi_reflection_list[i], dim=0) for i in range(3)], dim=0)
 
     #theta2 -> [3,n_sample_per_level] phi2 ->[3,n_sample_per_level]
 
     final_result = torch.empty((5,0))
 
+    view_theta = view_theta_list[0]
+    view_theta2 = view_theta_list[1]
 
     for frame_idx in range(3):
-        theta2 = theta_phi_tensor[frame_idx,2,:]
-        phi2 = theta_phi_tensor[frame_idx,3,:]
+
 
         #e.g. coefficient be in shape [5,2,96], theta2 phi2 be in shape [ 2, n_sample_per_level * 3]
         # to compute outerproduct, we need coef.unsqueeze(-1)   and theta_phi.unsqueeze(0).unsqueeze(2)
@@ -375,7 +377,24 @@ def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sam
         constant_tmp = coef_table[:,0,frame_idx * n_sample_per_frame: frame_idx * n_sample_per_frame + n_sample_per_frame]
         constant_tmp = constant_tmp.repeat(1,n_sample_per_level)
 
-        parameter = torch.stack((theta2,phi2))
+        if view_option_str == "even_only":
+            theta2_normal = theta_phi_normal_tensor[frame_idx, 2, :]
+            phi2_normal = theta_phi_normal_tensor[frame_idx, 3, :]
+            parameter = torch.stack((theta2_normal,phi2_normal,view_theta2,view_theta))
+        elif view_option_str == "odd":
+            theta2_normal = theta_phi_normal_tensor[frame_idx, 2, :]
+            phi2_normal = theta_phi_normal_tensor[frame_idx, 3, :]
+            parameter = torch.stack((theta2_normal,phi2_normal,view_theta2,view_theta,view_theta * theta2_normal ,view_theta * phi2_normal))
+        elif view_option_str == "view_only":
+            parameter = torch.stack((view_theta2,view_theta))
+        elif view_option_str == "reflect_norm":
+            theta2_normal = theta_phi_normal_tensor[frame_idx, 2, :]
+            phi2_normal = theta_phi_normal_tensor[frame_idx, 3, :]
+            theta2_reflection = theta_phi_reflection_tensor[frame_idx, 2, :]
+            phi2_reflection = theta_phi_reflection_tensor[frame_idx, 3, :]
+            parameter = torch.stack((theta2_normal, phi2_normal, theta2_reflection, phi2_reflection,view_theta2,view_theta))
+        else:
+            raise NotImplementedError
 
         outer = non_const_coef.unsqueeze(-1) * parameter.unsqueeze(0).unsqueeze(2)
 
@@ -383,10 +402,10 @@ def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sam
         outer_T = torch.transpose(outer,2,3)
 
         #outer = outer.view((5,2,n_sample_per_frame * n_sample_per_level))
-        outer_T = outer_T.reshape((5,2,n_sample_per_level * n_sample_per_frame))
+        outer_T = outer_T.reshape((5,parameter.shape[0],n_sample_per_level * n_sample_per_frame))
 
 
-        test_sum = outer_T[:,0] + outer_T[:,1] + constant_tmp
+        test_sum = torch.sum(outer_T, dim=1) + constant_tmp
 
         final_result = torch.cat((final_result,test_sum),dim=-1)
 
@@ -916,26 +935,28 @@ def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_re
     return e, result
 
 
-def precompute_opt_info_view_dependent(texel_directions,n_sample_per_level,view_directions,view_thetas, use_reflected_dirs_as_parameter):
+def precompute_opt_info_view_dependent(texel_directions,n_sample_per_level,view_directions,view_thetas, use_reflected_dirs_as_parameter, view_option_str:str):
     weight_per_frame = []
     xyz_per_frame = []
-    theta_phi_per_frame = []
+    theta_phi_normal_per_frame = []
+    theta_phi_reflection_per_frame = []
 
     for frame_idx in range(3):
         frame_xyz = torch_util.torch_gen_frame_xyz_view_dependent(texel_directions, frame_idx, view_directions)
         frame_weight = torch_util.torch_gen_frame_weight(frame_xyz[-1], frame_idx)
-        if use_reflected_dirs_as_parameter:
-            frame_theta_phi = torch_util.torch_gen_theta_phi(frame_xyz[-1],frame_idx)
-        else:
-            frame_theta_phi = torch_util.torch_gen_theta_phi(texel_directions, frame_idx)
+
+        frame_reflection_theta_phi = torch_util.torch_gen_theta_phi(frame_xyz[-1],frame_idx)
+
+        frame_normal_theta_phi = torch_util.torch_gen_theta_phi(texel_directions, frame_idx)
 
         weight_per_frame.append(frame_weight)
         xyz_per_frame.append(frame_xyz)
-        theta_phi_per_frame.append(frame_theta_phi)
+        theta_phi_normal_per_frame.append(frame_normal_theta_phi)
+        theta_phi_reflection_per_frame.append(frame_reflection_theta_phi)
 
     view_theta_list = (view_thetas,view_thetas**2)
 
-    return weight_per_frame, xyz_per_frame, theta_phi_per_frame, view_theta_list
+    return weight_per_frame, xyz_per_frame, theta_phi_normal_per_frame,theta_phi_reflection_per_frame, view_theta_list
 
 
 def precompute_opt_info(texel_directions, n_sample_per_level):
@@ -979,7 +1000,8 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     view_model_dict = {
         "even_only":torch_util.QuadModel_View_EvenOnly,
         "view_only":torch_util.QuadModel_ViewOnly,
-        "odd":torch_util.QuadModel_View_Odd
+        "odd":torch_util.QuadModel_View_Odd,
+        "reflect_norm":torch_util.QuadModel_View_Reflection_Norm
     }
 
 
@@ -1067,16 +1089,16 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
 
 
-    #test code
-    torch_util.torch_gen_frame_xyz_view_dependent(all_locations_cube, 0, view_dirs)
 
 
 
 
     #view_cos_theta_global = torch.sum(view_dirs * all_locations, dim=1)
     if view_dependent:
-        weight_per_frame_global,xyz_per_frame_global,theta_phi_per_frame_global,view_theta_list_global = precompute_opt_info_view_dependent(all_locations_cube,
-                                                                                                                                            n_sample_per_level,view_dirs,view_theta,view_reflection_parameterization)
+        weight_per_frame_global, xyz_per_frame_global, theta_phi_normal_per_frame_global, theta_phi_reflection_per_frame_global, view_theta_list_global = precompute_opt_info_view_dependent(
+            all_locations_cube,
+            n_sample_per_level, view_dirs, view_theta, view_reflection_parameterization, view_option_str)
+
     else:
         weight_per_frame_global, xyz_per_frame_global, theta_phi_per_frame_global = precompute_opt_info(all_locations_cube, n_sample_per_level)
 
@@ -1112,8 +1134,8 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                 ref_list = compute_ggx_ndf_reference_half_vector_torch_vectorized(128, ggx_alpha, all_locations, tex_directions_res, tex_directions_res_map, ggx_ref_jac_weight)
             else:
                 ref_list = compute_ggx_ndf_ref_view_dependent_torch_vectorized(128, all_locations, tex_directions_res, tex_directions_res_map, view_dirs, ggx_ref_jac_weight)
-                weight_per_frame, xyz_per_frame, theta_phi_per_frame,view_theta_list = precompute_opt_info_view_dependent(all_locations_cube,
-                                                                                           n_sample_per_level, view_dirs, view_theta, view_reflection_parameterization)
+                weight_per_frame, xyz_per_frame, theta_phi_normal_per_frame,theta_phi_reflection_per_frame,view_theta_list = precompute_opt_info_view_dependent(all_locations_cube,
+                                                                                           n_sample_per_level, view_dirs, view_theta, view_reflection_parameterization, view_option_str)
 
             ref_list = ref_list.reshape(ref_list.shape + (1,))
             ref_list = ref_list / torch.sum(ref_list,dim=(1,2,3,4),keepdim=True)
@@ -1135,25 +1157,31 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             weight_per_frame, xyz_per_frame, theta_phi_per_frame = weight_per_frame_global, xyz_per_frame_global, theta_phi_per_frame_global
             if view_dependent:
                 view_theta_list = view_theta_list_global
+                theta_phi_normal_per_frame, theta_phi_reflection_per_frame = theta_phi_normal_per_frame_global, theta_phi_reflection_per_frame_global
         if vectorize:
             if not view_dependent:
-                # test = multiple_texel_full_optimization_vectorized_vec_prepare(n_sample_per_frame,
-                #                                                                      n_sample_per_level, ref_list,
-                #                                                                      weight_per_frame, xyz_per_frame,
-                #                                                                      theta_phi_per_frame, params,
-                #                                                                      constant, adjust_level, allow_neg_weight, device)
-
-
-                tmp_pushed_back_result = multiple_texel_full_optimization_vectorized(n_sample_per_frame,
+                tmp_pushed_back_result = multiple_texel_full_optimization_vectorized_vec_prepare(n_sample_per_frame,
                                                                                      n_sample_per_level, ref_list,
                                                                                      weight_per_frame, xyz_per_frame,
                                                                                      theta_phi_per_frame, params,
                                                                                      constant, adjust_level, allow_neg_weight, device)
+
+
+                # tmp_pushed_back_result = multiple_texel_full_optimization_vectorized(n_sample_per_frame,
+                #                                                                      n_sample_per_level, ref_list,
+                #                                                                      weight_per_frame, xyz_per_frame,
+                #                                                                      theta_phi_per_frame, params,
+                #                                                                      constant, adjust_level, allow_neg_weight, device)
             else:
-                tmp_pushed_back_result = multiple_texel_full_optimization_view_dependent_vectorized(n_sample_per_frame,n_sample_per_level,
-                                                                                                    ref_list,weight_per_frame,xyz_per_frame,
-                                                                                                    theta_phi_per_frame,view_theta_list,params,constant,
-                                                                                                    adjust_level, allow_neg_weight, view_option_str ,device)
+                tmp_pushed_back_result = multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sample_per_frame,n_sample_per_level, ref_list,
+                                                                                              weight_per_frame, xyz_per_frame,theta_phi_normal_per_frame,theta_phi_reflection_per_frame,
+                                                                                              view_theta_list,params,adjust_level,allow_neg_weight,view_option_str,
+                                                                                              device)
+
+                # tmp_pushed_back_result = multiple_texel_full_optimization_view_dependent_vectorized(n_sample_per_frame,n_sample_per_level,
+                #                                                                                     ref_list,weight_per_frame,xyz_per_frame,
+                #                                                                                     theta_phi_per_frame,view_theta_list,params,constant,
+                #                                                                                     adjust_level, allow_neg_weight, view_option_str ,device)
             # normalize pushed_back result
             tmp_pushed_back_sum = torch.sum(tmp_pushed_back_result, dim=[1, 2, 3, 4], keepdim=True)
             tmp_pushed_back_result /= (tmp_pushed_back_sum + 1e-7)

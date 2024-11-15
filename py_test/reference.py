@@ -229,6 +229,10 @@ def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_direct
 
     When computing view dependent reference, directions can be thought as the light direction. Given n, we can compute
     the h for each texel, and we can get the NDF of h for each direction
+
+    We should manually set the NDF that is below the horizon to be zero, should we?
+    If we do this, after push back, we also need to clip the below horizon part.
+
     """
     #normal_direction_normalized = normal_directions / torch.linalg.norm(normal_directions, dim=-1, keepdim=True)
     half_vec = torch_util.get_all_half_vector_torch_vectorized(view_direction,directions)
@@ -239,6 +243,8 @@ def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_direct
         #which directions to use, half_vec or map direction? This will make huge difference when viewing angle close to grazing angle?
         j = torch_util.torch_jacobian_vertorized(directions_map)
         ndf = ndf * j
+
+    #ndf = torch_util.clip_below_horizon_part_view_dependent(normal_directions, ndf)
 
     return ndf
 

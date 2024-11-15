@@ -362,7 +362,7 @@ def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sam
 
     #theta2 -> [3,n_sample_per_level] phi2 ->[3,n_sample_per_level]
 
-    final_result = torch.empty((5,0))
+    final_result = torch.empty((5,0), device=device)
 
     view_theta = view_theta_list[0]
     view_theta2 = view_theta_list[1]
@@ -463,7 +463,7 @@ def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sam
 
 
     #create sample_idx pattern
-    sample_idx_all = torch.arange(0, n_sample_per_level, dtype=torch.int)
+    sample_idx_all = torch.arange(0, n_sample_per_level, dtype=torch.int, device=device)
     sample_idx_all = sample_idx_all.repeat(3)
     sample_idx_all = torch.repeat_interleave(sample_idx_all, n_sample_per_frame, dim = 0)
     sample_idx_all = sample_idx_all[valid_idx]

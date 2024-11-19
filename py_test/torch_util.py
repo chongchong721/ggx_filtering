@@ -6,11 +6,49 @@ import map_util
 chan_count = 1
 
 #TODO: for testing, change this to cpu only
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-#device = torch.device('cpu')
+#device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cpu')
 
 texel_dir_128_torch_map = torch.from_numpy(map_util.texel_directions(128).astype(np.float32))
 texel_dir_128_torch = texel_dir_128_torch_map / torch.linalg.norm(texel_dir_128_torch_map, dim=-1, keepdim=True)
+
+
+class QuadModel_View_Relative_Frame(torch.nn.Module):
+    """
+    There is only one frame,
+
+    The frame only faces singularity when view_theta reaches 0(cos_view_theta reaches 1)
+    When view_theta reaches 0, the case degrades to the view-independent case where we assume n=v=r
+
+    So, what if for the view-independent case we have only one frame axis(this seems not optimal)
+
+    If there is no frame, how to parametrize theta,phi?
+
+    Current solution:
+
+    For now, simplify it to only generate non-near-parallel view directions, so that we avoid the singularity
+    Since there is no frame, we need to come up with a new parameterization that is the same across faces.
+    Note that, when l is fixed, different theta_view will have different shape of GGX NDF kernel on the map since
+    because of the cubemap-sphere projection. If we consider the parameter to be constant, which is proven still
+    works better than importance sampling in the n=v=r case, then we can have some initial guess for parameterization.
+
+    How about parameterize each face using two parameters?
+    Or, the Jacobian changes as a circle, one parameter(radius?) is enough to express the difference?
+
+    A simple way is to simply parameterize direction with face u,v. (or precisely u^2, v^2)
+
+    So, we can do c0 + c1 * u^2 + c2 * u^2 + c3 * view_theta^2 + c4 * view_theta
+
+    """
+    def __init__(self, n_sample_per_frame):
+        super(QuadModel_View_Relative_Frame, self).__init__()
+        self.params = torch.nn.Parameter(torch.rand(5,5,n_sample_per_frame), requires_grad=True)
+
+    def forward(self):
+        return self.params
+
+
+
 
 
 class QuadModel_View_Reflection_Norm(torch.nn.Module):
@@ -130,6 +168,25 @@ def initialize_mipmaps(n_level):
     return mipmaps
 
 
+def project_vector_to_surface(vector:torch.Tensor,surface_normal:torch.Tensor):
+    """
+
+    :param vector: [N,3]
+    :param surface_normal: [N,3] or [3,]
+    :return:
+    """
+    if surface_normal.dim() == 1:
+        surface_normal = surface_normal.unsqueeze(0)
+
+    surface_normal = surface_normal / torch.linalg.norm(surface_normal, dim=-1, keepdim=True)
+
+    dot_product = (vector * surface_normal).sum(dim=-1, keepdim=True)
+    vector_proj =  vector - dot_product * surface_normal
+
+    return vector_proj
+
+
+
 def get_half_vector_torch_vectorized(v:torch.Tensor,l:torch.Tensor):
     """
     :param v: either in the same shape of l or (3,)
@@ -156,15 +213,15 @@ def get_all_half_vector_torch_vectorized(v:torch.Tensor,l:torch.Tensor):
 def get_reflected_vector_torch_vectorized(n: torch.Tensor, wi: torch.Tensor):
     """
 
-    :param n: [N,3]
+    :param n: [N,3] normal, should be normalized
     :param wi: [N,3]  in most cases, wi we have is the direction that is pointing outward. Need to negate it
     :return:
     """
     wi_neg = -wi
     wi_neg = wi_neg / torch.linalg.norm(wi_neg, dim=-1, keepdim=True)
-    n_normalized = n / torch.linalg.norm(n, dim=-1, keepdim=True)
+    #n_normalized = n / torch.linalg.norm(n, dim=-1, keepdim=True)
 
-    r = wi_neg - 2 * torch.sum(wi_neg * n_normalized, dim=-1, keepdim=True) * n_normalized
+    r = wi_neg - 2 * torch.sum(wi_neg * n, dim=-1, keepdim=True) * n
 
 
     return r
@@ -295,6 +352,16 @@ def torch_gen_frame_weight(facex_xyz, frame_idx, follow_code = False):
 
     return frame_weight
 
+def torch_gen_theta_phi_no_frame(facex_xyz):
+    u,v,face = torch_xyz_to_uv_vectorized(facex_xyz)
+
+    u =  2 * u - 1
+    v =  2 * v - 1
+
+    return u,v,u*u,v*v
+
+
+
 
 def torch_gen_theta_phi(faces_xyz,frame_idx, follow_code = False):
     """
@@ -335,7 +402,7 @@ def torch_gen_theta_phi(faces_xyz,frame_idx, follow_code = False):
     return theta,phi,theta2,phi2
 
 
-def torch_gen_frame_xyz_view_dependent(facex_xyz, frame_idx, view_directions):
+def torch_gen_frame_xyz_view_dependent(faces_xyz_normalized, frame_idx, view_directions):
     """
 
     :param faces_xyz:
@@ -347,7 +414,7 @@ def torch_gen_frame_xyz_view_dependent(facex_xyz, frame_idx, view_directions):
     faces_xyz are n
 
     """
-    reflect_direction = get_reflected_vector_torch_vectorized(facex_xyz, view_directions)
+    reflect_direction = get_reflected_vector_torch_vectorized(faces_xyz_normalized, view_directions)
     Z = torch_normalized(reflect_direction, axis=-1)
     polar_axis = torch.zeros_like(Z, device=device)
     if frame_idx == 0 or frame_idx == 1 or frame_idx == 2:
@@ -362,9 +429,75 @@ def torch_gen_frame_xyz_view_dependent(facex_xyz, frame_idx, view_directions):
 
     return X, Y, Z
 
+def rotate_90degree_awayfrom_n(vectors,normals):
+    """
+    Rotate the vector 90 degree in the surface of vector and normal, Should be rotated away from normal
+    This can be implemented by two cross product. However, we need to handle edge cases when vector is close to normal
+    :param vectors:[N,3] should all be normalized
+    :param normals:[N,3] should all be normalized
+    :return:
+    """
+    batch_size = vectors.shape[0]
+
+    #determine near-parallel case
+    threshold = 0.99995
+    cosine = torch.sum(vectors * normals, dim=-1, keepdim=True)
+    near_parallel = cosine > threshold
+
+
+    tmp = torch.linalg.cross(vectors, normals)
+    tmp = tmp / torch.linalg.norm(tmp, dim = -1, keepdim = True).clamp(min=1e-8)
+
+    rotated_vectors = torch.linalg.cross(vectors, tmp)
+
+    if near_parallel.any():
+        # Select the least aligned standard basis vector for each vectors
+        abs_vectors = vectors.abs()
+        _, min_indices = abs_vectors.min(dim=1)
+
+        # Define standard basis vectors
+        basis = torch.tensor([[1.0, 0.0, 0.0],
+                              [0.0, 1.0, 0.0],
+                              [0.0, 0.0, 1.0]], device=vectors.device, dtype=vectors.dtype)
+
+        # Assign default vectors based on the least aligned basis vector
+        default_vectors = torch.zeros_like(vectors)
+        default_vectors[range(batch_size), :] = basis[min_indices]
+
+        # Compute k_parallel = vectors x default_vector for near-parallel vectors
+        k_parallel = torch.linalg.cross(vectors[near_parallel], default_vectors[near_parallel], dim=1)
+        k_parallel_norm = k_parallel.norm(dim=1, keepdim=True).clamp(min=1e-8)
+        k_parallel_normalized = k_parallel / k_parallel_norm
+
+        # Compute rotated_parallel = vectors x k_parallel_normalized
+        rotated_parallel = torch.linalg.cross(vectors[near_parallel], k_parallel_normalized, dim=1)
+
+        # Assign the rotated vectors for near-parallel cases
+        rotated_vectors[near_parallel] = rotated_parallel
+
+    return rotated_vectors
+
+
+def torch_gen_anisotropic_frame_xyz(faces_xyz_normalized, view_directions):
+    """
+    One perpendicular axis is simply rotating Z axis 90 degree on the v-n-l surface.
+    :param faces_xyz_normalized: in shape of [N,3], should be normalized
+    :param view_directions: in shape of [N,3]
+    :return:
+    """
+    reflect_direction = get_reflected_vector_torch_vectorized(faces_xyz_normalized, view_directions)
+    Z = torch_normalized(reflect_direction, axis=-1)
+
+    X = rotate_90degree_awayfrom_n(Z,faces_xyz_normalized)
+    X = X / torch.linalg.norm(X, axis = -1, keepdim = True)
+
+    Y = torch.linalg.cross(Z, X)
+
+    return X,Y,Z
 
 
 
+    #faces_xyz are the normal directions
 def torch_create_pixel_index(resolution,dimension):
     """
     Util function that create a pixel index from 0.5 to resolution - 0.5
@@ -1120,7 +1253,7 @@ def sample_uniform_hemisphere(uv):
 
 
 
-def sample_directions_over_hemispheres(normals, uv):
+def sample_directions_over_hemispheres(normals, uv, no_parallel = False):
     N = normals.shape[0]
 
     # Sample directions on the canonical hemisphere
@@ -1129,7 +1262,11 @@ def sample_directions_over_hemispheres(normals, uv):
     u = uv[:, 0]
     v = uv[:, 1]
     phi = u * 2 * np.pi
-    cos_theta = v
+    if no_parallel:
+        cos_threshold = 0.99995
+        cos_theta = (v * cos_threshold + (1 - cos_threshold)).clamp(min=0.0,max=1.0)
+    else:
+        cos_theta = v
     sin_theta = torch.sqrt(1 - cos_theta * cos_theta)
     x = torch.cos(phi) * sin_theta
     y = torch.sin(phi) * sin_theta
@@ -1149,10 +1286,10 @@ def sample_directions_over_hemispheres(normals, uv):
     reference_final = torch.where(mask, reference_alt.expand(N, -1), reference.expand(N, -1))  # [N, 3]
 
     # Compute orthonormal basis vectors u and v
-    u = torch.cross(reference_final, w, dim=1)  # [N, 3]
+    u = torch.linalg.cross(reference_final, w, dim=1)  # [N, 3]
     u = torch.nn.functional.normalize(u, p=2, dim=1)  # [N, 3]
 
-    v = torch.cross(w, u, dim=1)  # [N, 3]
+    v = torch.linalg.cross(w, u, dim=1)  # [N, 3]
     # No need to normalize v because u and w are unit vectors and orthogonal
 
     # Rotate sampled directions to align with the given normals
@@ -1170,11 +1307,12 @@ def sample_directions_over_hemispheres(normals, uv):
 
 
 
-def sample_view_dependent_location(n_sample_per_level, g = None):
+def sample_view_dependent_location(n_sample_per_level, g = None, no_parallel = False):
     """
 
     :param n_sample_per_level:
     :param g:
+    :param no_parallel: whether to generate parallel view and normal directions( and near parallel cases)
     :return:
     """
     if g is None:
@@ -1192,7 +1330,7 @@ def sample_view_dependent_location(n_sample_per_level, g = None):
 
     uv = torch.rand((n_sample_per_level,2),generator=g, device = device)
 
-    view_direction, view_theta = sample_directions_over_hemispheres(xyz,uv)
+    view_direction, view_theta = sample_directions_over_hemispheres(xyz,uv, no_parallel=no_parallel)
 
     return (view_direction, view_theta ,xyz_cube, xyz)
 
@@ -1222,13 +1360,13 @@ def clip_below_horizon_part_view_dependent(normal_directions, result):
     texel_dir are the lighting direction. We already make sure that viewing will never get below horizon
 
     :param normal_directions: [N,3]
-    :param result: [N,6,128,128]
+    :param result: [N,6,128,128,1] or [N,6,128,128]
     :return:
     """
     n = normal_directions.shape[0]
     normal_reshaped = normal_directions.view(n,1,1,1,3)
     element_wise_sum = normal_reshaped * texel_dir_128_torch.unsqueeze(0)
-    cosine = torch.sum(element_wise_sum,dim=-1)
+    cosine = torch.sum(element_wise_sum,dim=-1,keepdim=True)
     result_clipped = torch.where(cosine > 0, result, 0.0)
     return result_clipped
 

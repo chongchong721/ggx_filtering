@@ -182,3 +182,30 @@ one texel optimization:
   adjust level -> higher value?
 
 use a point, so that it recovers ggx distribution?
+
+
+
+
+
+TODO:
+
+filter view-dependent
+
+actually render to test?
+
+for each theta? separate?
+
+
+initialization!!! optimize to importance sampling parameter
+
+change Z-axis of view dependent case
+
+n,l,v relationship. Do we count the part where h is above horizon but l or v are below horizon?(in compute_reference and pushback)
+
+jacobian from h to l/v in reference?
+
+anisotropy of kernel. Horizon clipping?
+
+Change axis, make X/Y match the anisotropic direction? -> The axis should be on the same plane with h,l,v. And it should be perpendicular to l?
+
+Parameterization if there is no frame?

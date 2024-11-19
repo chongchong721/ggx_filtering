@@ -199,19 +199,123 @@ def importance_sample_view_dependent_location(ggx_alpha, n_sample_per_frame, n_s
 
 
 
-def g1_isotropic_torch_vectorized():
-    pass
+def g1_isotropic_torch_vectorized(ggx_alpha,view, normal_directions, half_vectors):
+    """
 
-def lambda_isotropic_torch_vectorized():
-    pass
+    :param view: [N,3]  should be normalized
+    :param normal_directions: [N,3] should be normalized
+    :param half_vectors: [N,6,128,128,3] should be normalized
+    :return:
+    """
+    #heaviside
+    #dot product of view and all normal_directions
+    view_reshaped = view.view(view.shape[0],1,1,1,3)
+    element_wise_sum = view_reshaped * half_vectors
+    cosine = torch.sum(element_wise_sum,dim=-1)
+    heaviside_result = torch.where(cosine > 0.0, 1.0, 0.0)
 
-def vndf_isotropic_torch_vectorized():
-    pass
+    #factor is in shape of [N]. Given one normal and one view, there is only one lambda
+    factor = 1 / (1 + lambda_isotropic_torch_vectorized(ggx_alpha,view, normal_directions))
+
+    return heaviside_result * factor.view(view.shape[0],1,1,1)
+
+
+def lambda_isotropic_torch_vectorized(ggx_alpha, directions, normal_directions):
+    """
+    Given N view directions, compute Lambda of this view with different wh
+
+    Lambda(w) -> compute theta_o
+    :param ggx_alpha:
+    :param directions: [N,3] should be normalized
+    :param normal_directions: [N,3]
+    :return:
+    """
+    cosine = torch.sum(directions * normal_directions,dim=-1)
+    theta = torch.arccos(cosine)
+    tangent = torch.tan(theta)
+
+    alpha = 1 / ggx_alpha / tangent
+
+    l = (-1 + torch.sqrt(1 + 1 / (alpha**2))) / 2
+    return l
+
+
+def vndf_isotropic_torch_vectorized(view_directions, normal_directions, directions, directions_map ,ggx_alpha):
+    """
+    :param view_directions: [N,3]
+    :param normal_directions: [N,3]
+    :param directions [N,6,128,128,3] -> l
+    :return:
+    """
+    #[N,6,128,128,3]
+    half_vectors = view_directions.view(view_directions.shape[0], 1, 1, 1, 3) + directions
+    half_vectors = half_vectors / torch.linalg.norm(half_vectors, dim = -1, keepdim = True)
+
+    g1 = g1_isotropic_torch_vectorized(ggx_alpha,view_directions,normal_directions,half_vectors)
+    ndf = compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha,normal_directions,directions,directions_map,view_directions,False)
+    cos = torch.abs(torch.sum(view_directions.view(view_directions.shape[0], 1, 1, 1, 3) * half_vectors,dim=-1))
+    result = g1 * ndf * cos / torch.sum(view_directions * normal_directions,dim=-1).view(view_directions.shape[0], 1, 1, 1)
+
+    zero_condition = torch.sum(normal_directions.view(view_directions.shape[0], 1, 1, 1, 3) * half_vectors, dim = -1) < 0.0
+
+    result[zero_condition] = 0.0
+
+    # #Test the first and second item vndf
+    # for i in range(2):
+    #     view_test = view_directions[i]
+    #     normal_test = normal_directions[i]
+    #     for j in range(6):
+    #         for m in range(128):
+    #             for n in range(128):
+    #                 direction_l = directions[j,m,n]
+    #
+    #                 this_g1 = g1[i,j,m,n]
+    #                 this_ndf = ndf[i,j,m,n]
+    #                 this_cos = cos[i,j,m,n]
+    #
+    #
+    #                 this_half_vector = half_vectors[i,j,m,n].detach().numpy()
+    #
+    #
+    #                 view_test_np = view_test.detach().numpy()
+    #                 normal_test_np = normal_test.detach().numpy()
+    #                 direction_l_np = direction_l.detach().numpy()
+    #
+    #                 view_rotate_np = material.rotate_vector_to_up(normal_test_np,view_test_np)
+    #                 l_rotate_np = material.rotate_vector_to_up(normal_test_np,direction_l_np)
+    #                 this_half_rotate = material.rotate_vector_to_up(normal_test_np,this_half_vector)
+    #
+    #                 h = mat_util.get_half_vector(view_rotate_np.reshape((3,1)),l_rotate_np.reshape((3,1)))
+    #
+    #                 vndf_current = ggx.vndf(view_rotate_np.reshape((3,1)),h)
+    #                 print(vndf_current)
+    #                 vndf_test = result[i,j,m,n]
+    #                 print(vndf_test.item())
+
+    return result
 
 
 
-def compute_ggx_vndf_ref_view_dependent_torch_vectorized():
-    pass
+def compute_ggx_vndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_directions, directions, directions_map, view_direction, apply_jacobian = False):
+    """
+    Compute VNDF(visible NDF)
+    :param ggx_alpha:
+    :param normal_directions:
+    :param directions:
+    :param directions_map:
+    :param view_direction:
+    :param apply_jacobian:
+    :return:
+    """
+    vndf = vndf_isotropic_torch_vectorized(view_direction,normal_directions,directions,directions_map,ggx_alpha)
+    if apply_jacobian:
+        #which directions to use, half_vec or map direction? This will make huge difference when viewing angle close to grazing angle?
+        j = torch_util.torch_jacobian_vertorized(directions_map)
+        vndf = vndf * j
+
+    vndf = torch_util.clip_below_horizon_part_view_dependent(normal_directions, vndf)
+
+    return vndf
 
 
 
@@ -244,7 +348,9 @@ def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_direct
         j = torch_util.torch_jacobian_vertorized(directions_map)
         ndf = ndf * j
 
-    #ndf = torch_util.clip_below_horizon_part_view_dependent(normal_directions, ndf)
+    ndf = ndf.reshape(ndf.shape + (1,))
+
+    ndf = torch_util.clip_below_horizon_part_view_dependent(normal_directions, ndf)
 
     return ndf
 
@@ -274,6 +380,7 @@ def compute_ggx_ndf_reference_half_vector_torch_vectorized(res, ggx_alpha, norma
         j = torch_util.torch_jacobian_vertorized(directions_map)
         ndf = ndf * j
 
+    ndf = ndf.reshape(ndf.shape + (1,))
 
     return ndf
 
@@ -386,7 +493,63 @@ if __name__ == '__main__':
     #synthetic_onepoint_input(direction,128)
 
 
+
+
+
     info = specular.cubemap_level_params(18)
+
+    a = np.array([[0.0,0.0,1.0]]).T
+    normal_vector = np.array([[1.0, 0.2, 0.1]])
+    normal_vector = normal_vector / np.linalg.norm(normal_vector)
+    normal_vector = normal_vector.T
+    view_vector_test = mat_util.reflect(-a, normal_vector)
+
+    # test = compute_ggx_vndf_ref_view_dependent_torch_vectorized(0.1, torch.from_numpy(b).reshape((1,3)), torch_util.texel_dir_128_torch,torch_util.texel_dir_128_torch_map,
+    #                                                            torch.from_numpy(c).reshape((1,3)),True)
+
+    X,Y,Z = torch_util.torch_gen_anisotropic_frame_xyz(torch.from_numpy(normal_vector).reshape((1, 3)), torch.from_numpy(view_vector_test).reshape((1, 3)))
+
+    X_proj = torch_util.project_vector_to_surface(vector=X,surface_normal=torch.Tensor([[0.0,0.0,1.0]]))
+
+    u,v,face_idx = torch_util.torch_xyz_to_uv_vectorized(torch.from_numpy(a).reshape((1,3)))
+
+    if X_proj[0][0] != 0.0:
+        k = X_proj[0][1] / X_proj[0][0]
+        c = v - k * u
+    else:
+        k = torch.inf
+        raise NotImplementedError
+
+    u_at_v_at_0 = (v-c) / k
+    v_at_u_at_0 = c
+
+    import matplotlib.pyplot as plt
+    x = np.linspace(0, 1, 100)
+    y = k * x + c
+    plt.figure(figsize=(6, 6))  # Optional: set the figure size
+
+    plt.grid(True)
+    plt.legend()
+
+    # Set equal aspect ratio
+    plt.axis('equal')  # Ensures that the scale is the same on both axes
+    plt.plot(x, y, label=f'y = {k}x + {c}')  # Plot the line
+    plt.show()
+
+
+    test = compute_ggx_ndf_ref_view_dependent_torch_vectorized(0.1, torch.from_numpy(normal_vector).reshape((1, 3)), torch_util.texel_dir_128_torch, torch_util.texel_dir_128_torch_map,
+                                                               torch.from_numpy(view_vector_test).reshape((1, 3)), True)
+
+
+
+
+    test = test[0]
+
+    test = torch.stack((test,test,test),dim = -1)
+
+    test = test.detach().numpy()
+
+    image_read.gen_cubemap_preview_image(test,128,filename="./test_clip.exr")
 
 
     generate_custom_reference("08-21_Swiss_A.hdr",128,info[4].roughness,8)

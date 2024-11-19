@@ -1263,8 +1263,9 @@ def sample_directions_over_hemispheres(normals, uv, no_parallel = False):
     v = uv[:, 1]
     phi = u * 2 * np.pi
     if no_parallel:
+        # dot(v,n) < 1.0
         cos_threshold = 0.99995
-        cos_theta = (v * cos_threshold + (1 - cos_threshold)).clamp(min=0.0,max=1.0)
+        cos_theta = v * cos_threshold
     else:
         cos_theta = v
     sin_theta = torch.sqrt(1 - cos_theta * cos_theta)

@@ -950,7 +950,7 @@ def test_one_texel_full_optimization(texel_direction, n_sample_per_frame, ggx_re
     return e, result
 
 
-def precompute_opt_info_view_dependent(texel_directions,n_sample_per_level,view_directions,view_thetas, use_reflected_dirs_as_parameter, view_option_str:str):
+def precompute_opt_info_view_dependent(texel_directions,n_sample_per_level,view_directions,view_thetas, use_reflected_dirs_as_parameter, view_option_str:str, device = torch.device('cpu')):
 
     texel_directions_normalized = texel_directions / torch.linalg.norm(texel_directions, dim=-1, keepdim=True)
 
@@ -983,7 +983,7 @@ def precompute_opt_info_view_dependent(texel_directions,n_sample_per_level,view_
         theta_phi_normal_per_frame = []
         theta_phi_reflection_per_frame = []
         view_theta_list = (view_thetas,view_thetas**2)
-        weight_per_frame.append(torch.ones(texel_directions.shape[0]))
+        weight_per_frame.append(torch.ones(texel_directions.shape[0],device=device))
         frame_xyz = torch_util.torch_gen_anisotropic_frame_xyz(texel_directions_normalized,view_directions)
         xyz_per_frame.append(frame_xyz)
         frame_reflection_theta_phi = torch_util.torch_gen_theta_phi_no_frame(texel_directions)
@@ -1133,7 +1133,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     #view_cos_theta_global = torch.sum(view_dirs * all_locations, dim=1)
     if view_dependent:
         #weight_per_frame_global, xyz_per_frame_global, theta_phi_normal_per_frame_global, theta_phi_reflection_per_frame_global, view_theta_list_global
-        all_precomputed_info_global = precompute_opt_info_view_dependent(all_locations_cube,n_sample_per_level, view_dirs, view_theta, view_reflection_parameterization, view_option_str)
+        all_precomputed_info_global = precompute_opt_info_view_dependent(all_locations_cube,n_sample_per_level, view_dirs, view_theta, view_reflection_parameterization, view_option_str, device=device)
 
     else:
         #weight_per_frame_global, xyz_per_frame_global, theta_phi_per_frame_global =
@@ -1175,7 +1175,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             else:
                 ref_list = compute_ggx_ndf_ref_view_dependent_torch_vectorized(128, all_locations, tex_directions_res, tex_directions_res_map, view_dirs, ggx_ref_jac_weight)
                 all_precomputed_info = precompute_opt_info_view_dependent(all_locations_cube,
-                            n_sample_per_level, view_dirs, view_theta, view_reflection_parameterization, view_option_str)
+                            n_sample_per_level, view_dirs, view_theta, view_reflection_parameterization, view_option_str, device=device)
 
 
             ref_list = ref_list / torch.sum(ref_list,dim=(1,2,3,4),keepdim=True)

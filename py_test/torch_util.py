@@ -6,11 +6,11 @@ import map_util
 chan_count = 1
 
 #TODO: for testing, change this to cpu only
-#device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device = torch.device('cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#device = torch.device('cpu')
 
-texel_dir_128_torch_map = torch.from_numpy(map_util.texel_directions(128).astype(np.float32))
-texel_dir_128_torch = texel_dir_128_torch_map / torch.linalg.norm(texel_dir_128_torch_map, dim=-1, keepdim=True)
+texel_dir_128_torch_map = torch.from_numpy(map_util.texel_directions(128).astype(np.float32)).to(device)
+texel_dir_128_torch = texel_dir_128_torch_map / torch.linalg.norm(texel_dir_128_torch_map, dim=-1, keepdim=True).to(device)
 
 
 class QuadModel_View_Relative_Frame(torch.nn.Module):

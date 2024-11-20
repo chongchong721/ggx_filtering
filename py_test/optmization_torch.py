@@ -33,7 +33,7 @@ from filter import synthetic_filter_showcase
 
 
 def process_view_option(view_option_str:str,view_reflection_parameterization:bool):
-    valid_option = ["view_only","even_only",'odd',"reflect_norm","relative_frame"]
+    valid_option = ["view_only","even_only",'odd',"reflect_norm","relative_frame","relative_frame_full"]
     if view_option_str.lower() in valid_option:
         view_dependent = True
     else:
@@ -349,12 +349,14 @@ def multiple_texel_full_optimization_view_dependent_vectorized(n_sample_per_fram
 
 
 
-def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sample_per_frame, n_sample_per_level, ggx_ref_list, all_params_list ,coef_table=None, adjust_level = False, allow_neg_weight = False, view_option_str = 'None' ,device = torch.device('cpu')):
+def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sample_per_frame, n_sample_per_level, ggx_ref_list, all_params_list ,
+                                                                           coef_table=None, adjust_level = False, allow_neg_weight = False,
+                                                                           view_option_str = 'None', use_reflection_parameterization = False ,device = torch.device('cpu')):
     #First use coefficient to compute...
 
     #coefficient [5,3,n_sample_per_frame * 3]
 
-    if view_option_str != "relative_frame":
+    if view_option_str != "relative_frame" and view_option_str!="relative_frame_full":
         weight_list, xyz_list, theta_phi_normal_list, theta_phi_reflection_list, view_theta_list = all_params_list
         #theta,phi parameter list([list(theta[200],phi,theta2,phi2)](frame0),[],[])
         frame_count = len(theta_phi_normal_list)
@@ -366,10 +368,12 @@ def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sam
 
         #theta2 -> [3,n_sample_per_level] phi2 ->[3,n_sample_per_level]
     else:
-        weight_list, xyz_list, theta_phi_normal_list, view_theta_list = all_params_list
+        weight_list, xyz_list, theta_phi_normal_list, theta_phi_reflection_list ,view_theta_list = all_params_list
         frame_count = len(xyz_list)
         theta_phi_normal_tensor = torch.stack(
             [torch.stack(theta_phi_normal_list[i], dim=0) for i in range(frame_count)], dim=0)
+        theta_phi_reflection_tensor = torch.stack(
+            [torch.stack(theta_phi_reflection_list[i], dim=0) for i in range(frame_count)], dim=0)
 
     final_result = torch.empty((5,0), device=device)
 
@@ -403,9 +407,19 @@ def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sam
             phi2_reflection = theta_phi_reflection_tensor[frame_idx, 3, :]
             parameter = torch.stack((theta2_normal, phi2_normal, theta2_reflection, phi2_reflection,view_theta2,view_theta))
         elif view_option_str == "relative_frame":
-            theta2_reflection = theta_phi_normal_tensor[frame_idx, 2, :]
-            phi2_reflection = theta_phi_normal_tensor[frame_idx, 3, :]
-            parameter = torch.stack((theta2_reflection, phi2_reflection,view_theta2,view_theta))
+            if use_reflection_parameterization:
+                theta2 = theta_phi_reflection_tensor[frame_idx, 2, :]
+                phi2 = theta_phi_reflection_tensor[frame_idx, 3, :]
+            else:
+                theta2 = theta_phi_normal_tensor[frame_idx, 2, :]
+                phi2 = theta_phi_normal_tensor[frame_idx, 3, :]
+            parameter = torch.stack((theta2, phi2,view_theta2,view_theta))
+        elif view_option_str == "relative_frame_full":
+            theta2_normal = theta_phi_normal_tensor[frame_idx, 2, :]
+            phi2_normal = theta_phi_normal_tensor[frame_idx, 3, :]
+            theta2_reflection = theta_phi_reflection_tensor[frame_idx, 2, :]
+            phi2_reflection = theta_phi_reflection_tensor[frame_idx, 3, :]
+            parameter = torch.stack((theta2_normal,phi2_normal,theta2_reflection, phi2_reflection,view_theta2,view_theta))
         else:
             raise NotImplementedError
 
@@ -954,7 +968,7 @@ def precompute_opt_info_view_dependent(texel_directions,n_sample_per_level,view_
 
     texel_directions_normalized = texel_directions / torch.linalg.norm(texel_directions, dim=-1, keepdim=True)
 
-    if view_option_str != "relative_frame":
+    if view_option_str != "relative_frame" and view_option_str != "relative_frame_full":
         weight_per_frame = []
         xyz_per_frame = []
         theta_phi_normal_per_frame = []
@@ -987,10 +1001,12 @@ def precompute_opt_info_view_dependent(texel_directions,n_sample_per_level,view_
         xyz_per_frame.append(frame_xyz)
         frame_normal_theta_phi = torch_util.torch_gen_theta_phi_no_frame(texel_directions)
         theta_phi_normal_per_frame.append(frame_normal_theta_phi)
+        frame_reflected_theta_phi = torch_util.torch_gen_theta_phi_no_frame(frame_xyz[-1])
+        theta_phi_reflection_per_frame.append(frame_reflected_theta_phi)
 
         view_theta_list = (view_thetas,view_thetas**2)
 
-        return weight_per_frame,xyz_per_frame, theta_phi_normal_per_frame, view_theta_list
+        return weight_per_frame,xyz_per_frame, theta_phi_normal_per_frame, theta_phi_reflection_per_frame, view_theta_list
 
 
 def precompute_opt_info(texel_directions, n_sample_per_level):
@@ -1201,7 +1217,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             else:
                 tmp_pushed_back_result = multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sample_per_frame,n_sample_per_level, ref_list,
                                                                                               all_precomputed_info,params,adjust_level,allow_neg_weight,view_option_str,
-                                                                                              device)
+                                                                                              view_reflection_parameterization,device)
 
                 # tmp_pushed_back_result = multiple_texel_full_optimization_view_dependent_vectorized(n_sample_per_frame,n_sample_per_level,
                 #                                                                                     ref_list,weight_per_frame,xyz_per_frame,

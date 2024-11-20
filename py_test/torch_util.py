@@ -12,6 +12,22 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 texel_dir_128_torch_map = torch.from_numpy(map_util.texel_directions(128).astype(np.float32)).to(device)
 texel_dir_128_torch = texel_dir_128_torch_map / torch.linalg.norm(texel_dir_128_torch_map, dim=-1, keepdim=True).to(device)
 
+class QuadModel_View_Relative_Frame_Full(torch.nn.Module):
+    """
+    Similar to QuadModel_View_Relative_Frame,
+    here we use the full parameterization of normal vector and reflected vector.
+    can view_theta + normal vector + reflected vector determine a unique view/light direction pair?
+
+    c0 + c1 * u_normal^2 + c2 * v_normal^2 + c3 * u_reflected^2 + c4 * v_reflected^2
+    + c5 * view_theta^2 + c6 * view_theta
+    """
+    def __init__(self, n_sample_per_frame):
+        super(QuadModel_View_Relative_Frame_Full, self).__init__()
+        self.params = torch.nn.Parameter(torch.rand(5,7,n_sample_per_frame), requires_grad=True)
+
+    def forward(self):
+        return self.params
+
 
 class QuadModel_View_Relative_Frame(torch.nn.Module):
     """
@@ -149,7 +165,8 @@ def create_view_model_dict():
         "view_only":QuadModel_ViewOnly,
         "odd":QuadModel_View_Odd,
         "reflect_norm":QuadModel_View_Reflection_Norm,
-        "relative_frame":QuadModel_View_Relative_Frame
+        "relative_frame":QuadModel_View_Relative_Frame,
+        "relative_frame_full":QuadModel_View_Relative_Frame_Full
     }
 
     return view_model_dict

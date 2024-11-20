@@ -658,7 +658,7 @@ def compare_view_dependent_ggx_kernel(constant,adjust_level,ggx_alpha,n_sample_p
         view_direction = view_direction.cpu().detach().numpy().flatten()
         normal_direction = normal_direction.cpu().detach().numpy().flatten()
 
-        mipmap = fetch_synthetic(normal_direction,128)
+        mipmap = fetch_synthetic(reflected_direction,128)
 
         #Given a view direction, compute, for each normal in the cubemap, its best sample_directions, and fetch the color.
         fetched_kernel = fetch_sample_view_dependent_python_table(mipmap,level_to_test,params,

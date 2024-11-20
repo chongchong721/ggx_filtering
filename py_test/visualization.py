@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.mplot3d import Axes3D
-
+import matplotlib
 from map_util import texel_directions
 
 def normalize_minmax(array):
@@ -461,7 +461,86 @@ def plot_cube_with_function(normal_vector):
     plt.show()
 
 
+# Function to set equal aspect ratio
+def set_axes_equal(ax):
+    # '''Set equal scaling for all axes.'''
+    # x_limits = ax.get_xlim3d()
+    # y_limits = ax.get_ylim3d()
+    # z_limits = ax.get_zlim3d()
+    #
+    # x_range = abs(x_limits[1] - x_limits[0])
+    # x_middle = np.mean(x_limits)
+    # y_range = abs(y_limits[1] - y_limits[0])
+    # y_middle = np.mean(y_limits)
+    # z_range = abs(z_limits[1] - z_limits[0])
+    # z_middle = np.mean(z_limits)
+    #
+    # plot_radius = max([x_range, y_range, z_range])
 
+    ax.set_xlim3d([-1,1])
+    ax.set_ylim3d([-1,1])
+    ax.set_zlim3d([-1,1])
+
+def plot_nvl_vector(n_normalized,v_normalized,reflect_normalized,light_vectors_normalized,all_weights, X_frame):
+    matplotlib.use('TkAgg')
+    origin = np.array([0, 0, 0])
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Set labels and title
+    ax.set_xlabel('X axis')
+    ax.set_ylabel('Y axis')
+    ax.set_zlabel('Z axis')
+    ax.set_title('Visualization of Normal, View, and Light Vectors')
+
+    print("n",n_normalized)
+    print("v",v_normalized)
+    print("r",reflect_normalized)
+
+    # Plot Normal Vector (Red)
+    ax.quiver(
+        origin[0], origin[1], origin[2],  # Starting point
+        n_normalized[0], n_normalized[1], n_normalized[2],  # Vector components
+        color='red', label='Normal Vector (n)', length=1.0, normalize=True, pivot = 'tail'
+    )
+
+    # Plot View Vector (Blue)
+    ax.quiver(
+        origin[0], origin[1], origin[2],
+        v_normalized[0], v_normalized[1], v_normalized[2],
+        color='blue', label='View Vector (v)', length=1.0, normalize=True, pivot = 'tail'
+    )
+
+    ax.quiver(
+        origin[0], origin[1], origin[2],
+        reflect_normalized[0], reflect_normalized[1], reflect_normalized[2],
+        color='green', label='Reflect Vector (r)', length=1.0, normalize=True, pivot = 'tail'
+    )
+
+    ax.quiver(
+        origin[0], origin[1], origin[2],
+        X_frame[0], X_frame[1], X_frame[2],
+        color='black', label='relative x frame', length=1.0, normalize=True, pivot = 'tail'
+    )
+
+    # Plot Light Vectors (Yellow)
+    for idx, l in enumerate(light_vectors_normalized):
+        ax.quiver(
+            origin[0], origin[1], origin[2],
+            l[0], l[1], l[2],
+            color='yellow', label=f'Light Vector {idx + 1}' if idx == 0 else "",
+            # Label only the first to avoid duplicates
+            length=all_weights[idx] if all_weights[idx] > 0.0 else 0.0, normalize=True, pivot = 'tail'
+        )
+
+    # Set equal aspect ratio
+    set_axes_equal(ax)
+
+    # Show grid
+    ax.grid(True)
+
+    # Display the plot
+    plt.show()
 
 
 if __name__ == "__main__":

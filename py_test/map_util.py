@@ -10,6 +10,60 @@ currently long lat assume +Y is up
 which means tho = ar
 """
 
+def get_reflected_vector_vectorized(n: np.ndarray, wi: np.ndarray):
+    """
+
+    :param n: [N,3] or [3,] normal, should be normalized
+    :param wi: [N,3]  in most cases, wi we have is the direction that is pointing outward. Need to negate it
+    :return:
+    """
+    if wi.ndim == 1:
+        num_leading_dims = n.ndim - 1  # Subtract 1 because the last dimension is 3
+        # Create the new shape: (1, 1, ..., 3)
+        new_shape = (1,) * num_leading_dims + (3,)
+        wi = wi.reshape(new_shape)
+
+    wi_neg = -wi
+    wi_neg = wi_neg / np.linalg.norm(wi_neg, axis=-1, keepdims=True)
+    #n_normalized = n / torch.linalg.norm(n, dim=-1, keepdim=True)
+
+    r = wi_neg - 2 * np.sum(wi_neg * n, axis=-1, keepdims=True) * n
+
+
+    return r
+
+
+
+def rotate_90degree_awayfrom_n(vectors,normals):
+    """
+    Rotate the vector 90 degree in the surface of vector and normal, Should be rotated away from normal
+    This can be implemented by two cross product. However, we need to handle edge cases when vector is close to normal
+    :param vectors:[N,3] should all be normalized
+    :param normals:[N,3] should all be normalized
+    :return:
+    """
+    batch_size = vectors.shape[0]
+
+    #determine near-parallel case
+    threshold = 0.99995
+    cosine = np.sum(vectors * normals, axis=-1, keepdims=True)
+    near_parallel = cosine > threshold
+
+
+    tmp = np.cross(vectors, normals)
+    tmp = tmp / np.linalg.norm(tmp, axis = -1, keepdims = True)
+
+    rotated_vectors = np.cross(vectors, tmp)
+
+
+
+    if np.any(near_parallel):
+        raise NotImplementedError
+
+    return rotated_vectors
+
+
+
 def xyz_to_latlon(xyz:np.ndarray):
     """
     :param xyz: normalized vector xyz
@@ -410,6 +464,26 @@ def random_dir_sphere(uv = None, n_dir = 1):
 
     return np.stack((x, y, z), axis=1)
 
+def random_dir_hemisphere(uv = None, n_dir = 1):
+    if uv is None:
+        rng = np.random.default_rng(int(datetime.now().timestamp()))
+        u = rng.random(n_dir)
+        v = rng.random(n_dir)
+    else:
+        assert uv.shape[1] == 2 and uv.shape[0] == n_dir
+        u = uv[:, 0]
+        v = uv[:, 1]
+
+    #uniformly sample direction from a sphere
+    phi = u * 2 * np.pi
+    cos_theta = v
+    sin_theta = np.sqrt(1 - cos_theta * cos_theta)
+
+    x = np.cos(phi) * sin_theta
+    y = np.sin(phi) * sin_theta
+    z = cos_theta
+
+    return np.stack((x, y, z), axis=1)
 
 def dir_to_cube_coordinate(xyz):
     max = np.max(np.abs(xyz),axis=-1)
@@ -526,6 +600,26 @@ def gen_frame_xyz(faces_xyz, frame_idx):
     return X,Y,Z
 
 
+def gen_anisotropic_frame_xyz(faces_xyz_normalized, view_directions):
+    """
+    All input should already be normalized
+    :param faces_xyz_normalized:
+    :param view_directions:
+    :return:
+    """
+
+    reflect_direction = get_reflected_vector_vectorized(faces_xyz_normalized, view_directions)
+    Z = reflect_direction / np.linalg.norm(reflect_direction,axis=-1,keepdims=True)
+
+    X = rotate_90degree_awayfrom_n(Z, faces_xyz_normalized)
+    X = X / np.linalg.norm(X, axis=-1, keepdims=True)
+
+    Y = np.cross(Z, X)
+
+    return X, Y, Z
+
+
+
 def gen_frame_weight(facex_xyz, frame_idx, follow_code = False):
     """
     Compute frame weight for each texel according to the paper, the up/bot face have little weight
@@ -580,6 +674,13 @@ def gen_theta_phi(faces_xyz,frame_idx, follow_code = False):
     return theta,phi,theta2,phi2
 
 
+def gen_theta_phi_no_frame(facex_xyz):
+    u,v,face = xyz_to_uv_vectorized(facex_xyz)
+
+    u =  2 * u - 1
+    v =  2 * v - 1
+
+    return u,v,u*u,v*v
 
 
 

@@ -37,7 +37,9 @@ class QuadModel_View_Relative_Frame(torch.nn.Module):
 
     A simple way is to simply parameterize direction with face u,v. (or precisely u^2, v^2)
 
-    So, we can do c0 + c1 * u^2 + c2 * u^2 + c3 * view_theta^2 + c4 * view_theta
+    Currently, we use the u,v value of the normal vector
+
+    So, we can do c0 + c1 * u^2 + c2 * v^2 + c3 * view_theta^2 + c4 * view_theta
 
     """
     def __init__(self, n_sample_per_frame):
@@ -141,7 +143,16 @@ class ConstantModel(torch.nn.Module):
     def forward(self):
         return self.params
 
+def create_view_model_dict():
+    view_model_dict = {
+        "even_only":QuadModel_View_EvenOnly,
+        "view_only":QuadModel_ViewOnly,
+        "odd":QuadModel_View_Odd,
+        "reflect_norm":QuadModel_View_Reflection_Norm,
+        "relative_frame":QuadModel_View_Relative_Frame
+    }
 
+    return view_model_dict
 
 
 def level_to_res(level, n_level):
@@ -489,7 +500,7 @@ def torch_gen_anisotropic_frame_xyz(faces_xyz_normalized, view_directions):
     Z = torch_normalized(reflect_direction, axis=-1)
 
     X = rotate_90degree_awayfrom_n(Z,faces_xyz_normalized)
-    X = X / torch.linalg.norm(X, axis = -1, keepdim = True)
+    X = X / torch.linalg.norm(X, dim = -1, keepdim = True)
 
     Y = torch.linalg.cross(Z, X)
 
@@ -1356,7 +1367,7 @@ def sample_location(n_sample_per_level, g = None):
 
 
 
-def clip_below_horizon_part_view_dependent(normal_directions, result):
+def clip_below_horizon_part_view_dependent(normal_directions, result, texel_dir_torch):
     """
     texel_dir are the lighting direction. We already make sure that viewing will never get below horizon
 
@@ -1366,7 +1377,7 @@ def clip_below_horizon_part_view_dependent(normal_directions, result):
     """
     n = normal_directions.shape[0]
     normal_reshaped = normal_directions.view(n,1,1,1,3)
-    element_wise_sum = normal_reshaped * texel_dir_128_torch.unsqueeze(0)
+    element_wise_sum = normal_reshaped * texel_dir_torch.unsqueeze(0)
     cosine = torch.sum(element_wise_sum,dim=-1,keepdim=True)
     result_clipped = torch.where(cosine > 0, result, 0.0)
     return result_clipped

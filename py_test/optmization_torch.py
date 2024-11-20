@@ -4,6 +4,7 @@ import map_util
 import mat_util
 from datetime import datetime
 
+from py_test.torch_util import texel_dir_128_torch
 from reference import compute_ggx_ndf_reference,compute_ggx_ndf_reference_torch_vectorized,compute_ggx_ndf_reference_half_vector_torch_vectorized,compute_ggx_ndf_ref_view_dependent_torch_vectorized
 
 import scipy
@@ -366,10 +367,10 @@ def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sam
 
         #theta2 -> [3,n_sample_per_level] phi2 ->[3,n_sample_per_level]
     else:
-        weight_list, xyz_list, theta_phi_reflection_list, view_theta_list = all_params_list
+        weight_list, xyz_list, theta_phi_normal_list, view_theta_list = all_params_list
         frame_count = len(xyz_list)
-        theta_phi_reflection_tensor = torch.stack(
-            [torch.stack(theta_phi_reflection_list[i], dim=0) for i in range(frame_count)], dim=0)
+        theta_phi_normal_tensor = torch.stack(
+            [torch.stack(theta_phi_normal_list[i], dim=0) for i in range(frame_count)], dim=0)
 
     final_result = torch.empty((5,0), device=device)
 
@@ -403,8 +404,8 @@ def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sam
             phi2_reflection = theta_phi_reflection_tensor[frame_idx, 3, :]
             parameter = torch.stack((theta2_normal, phi2_normal, theta2_reflection, phi2_reflection,view_theta2,view_theta))
         elif view_option_str == "relative_frame":
-            theta2_reflection = theta_phi_reflection_tensor[frame_idx, 2, :]
-            phi2_reflection = theta_phi_reflection_tensor[frame_idx, 3, :]
+            theta2_reflection = theta_phi_normal_tensor[frame_idx, 2, :]
+            phi2_reflection = theta_phi_normal_tensor[frame_idx, 3, :]
             parameter = torch.stack((theta2_reflection, phi2_reflection,view_theta2,view_theta))
         else:
             raise NotImplementedError
@@ -982,16 +983,15 @@ def precompute_opt_info_view_dependent(texel_directions,n_sample_per_level,view_
         xyz_per_frame = []
         theta_phi_normal_per_frame = []
         theta_phi_reflection_per_frame = []
-        view_theta_list = (view_thetas,view_thetas**2)
         weight_per_frame.append(torch.ones(texel_directions.shape[0],device=device))
         frame_xyz = torch_util.torch_gen_anisotropic_frame_xyz(texel_directions_normalized,view_directions)
         xyz_per_frame.append(frame_xyz)
-        frame_reflection_theta_phi = torch_util.torch_gen_theta_phi_no_frame(texel_directions)
-        theta_phi_reflection_per_frame.append(frame_reflection_theta_phi)
+        frame_normal_theta_phi = torch_util.torch_gen_theta_phi_no_frame(texel_directions)
+        theta_phi_normal_per_frame.append(frame_normal_theta_phi)
 
         view_theta_list = (view_thetas,view_thetas**2)
 
-        return weight_per_frame,xyz_per_frame, theta_phi_reflection_per_frame, view_theta_list
+        return weight_per_frame,xyz_per_frame, theta_phi_normal_per_frame, view_theta_list
 
 
 def precompute_opt_info(texel_directions, n_sample_per_level):
@@ -1032,16 +1032,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
     view_dependent, view_option_str = process_view_option(view_option_str, view_reflection_parameterization)
 
-    view_model_dict = {
-        "even_only":torch_util.QuadModel_View_EvenOnly,
-        "view_only":torch_util.QuadModel_ViewOnly,
-        "odd":torch_util.QuadModel_View_Odd,
-        "reflect_norm":torch_util.QuadModel_View_Reflection_Norm,
-        "relative_frame":torch_util.QuadModel_View_Relative_Frame
-    }
-
-
-
+    view_model_dict = torch_util.create_view_model_dict()
 
     logger = logging.getLogger(__name__)
 
@@ -1117,7 +1108,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
 
     if view_dependent:
-        ref_list_global = compute_ggx_ndf_ref_view_dependent_torch_vectorized(128, all_locations,
+        ref_list_global = compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, all_locations,
                                                                               tex_directions_res,
                                                                               tex_directions_res_map,
                                                                               view_dirs, ggx_ref_jac_weight)
@@ -1173,7 +1164,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                 all_precomputed_info = precompute_opt_info(all_locations_cube,n_sample_per_level)
                 ref_list = compute_ggx_ndf_reference_half_vector_torch_vectorized(128, ggx_alpha, all_locations, tex_directions_res, tex_directions_res_map, ggx_ref_jac_weight)
             else:
-                ref_list = compute_ggx_ndf_ref_view_dependent_torch_vectorized(128, all_locations, tex_directions_res, tex_directions_res_map, view_dirs, ggx_ref_jac_weight)
+                ref_list = compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, all_locations, tex_directions_res, tex_directions_res_map, view_dirs, ggx_ref_jac_weight)
                 all_precomputed_info = precompute_opt_info_view_dependent(all_locations_cube,
                             n_sample_per_level, view_dirs, view_theta, view_reflection_parameterization, view_option_str, device=device)
 
@@ -1217,7 +1208,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                 #                                                                                     ref_list,weight_per_frame,xyz_per_frame,
                 #                                                                                     theta_phi_per_frame,view_theta_list,params,constant,
                 #                                                                                     adjust_level, allow_neg_weight, view_option_str ,device)
-                tmp_pushed_back_result = torch_util.clip_below_horizon_part_view_dependent(all_locations,tmp_pushed_back_result)
+                tmp_pushed_back_result = torch_util.clip_below_horizon_part_view_dependent(all_locations,tmp_pushed_back_result, texel_dir_128_torch)
             # normalize pushed_back result
             tmp_pushed_back_sum = torch.sum(tmp_pushed_back_result, dim=[1, 2, 3, 4], keepdim=True)
             tmp_pushed_back_result /= (tmp_pushed_back_sum + 1e-7)

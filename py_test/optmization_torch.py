@@ -1047,14 +1047,13 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     logger.info("\n\n")
 
     if not random_shuffle:
-        rng = np.random.default_rng(12345)
+        rng = np.random.default_rng()
         dir_name = map_util.dir_filename(ggx_alpha, constant, n_sample_per_frame, n_sample_per_level, adjust_level,
                                          optimizer_type, allow_neg_weight=allow_neg_weight,
                                          ggx_ref_jac_weight=ggx_ref_jac_weight, view_dependent=view_dependent,view_option_str=view_option_str
                                          ,reflection_parameterization=view_reflection_parameterization)
         if view_dependent:
-            view_dirs, view_theta, all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level,
-                                                                                                                torch.Generator(device=device), no_parallel= True)
+            view_dirs, view_theta, all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level, torch.manual_seed(rng.integers(low=1,high=425124123)), no_parallel= True)
             torch.save(torch.concatenate(view_dirs,all_locations_cube),dir_name)
         else:
             all_locations = map_util.sample_location(n_sample_per_level,rng)
@@ -1063,6 +1062,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
     else:
         rng = torch.Generator(device=device)
+        rng.seed()
         #rng.manual_seed(12345)
         if view_dependent:
             view_dirs, view_theta, all_locations_cube, all_locations = torch_util.sample_view_dependent_location(n_sample_per_level,

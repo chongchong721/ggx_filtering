@@ -1372,12 +1372,13 @@ def clip_below_horizon_part_view_dependent(normal_directions, result, texel_dir_
     texel_dir are the lighting direction. We already make sure that viewing will never get below horizon
 
     :param normal_directions: [N,3]
+    :param texel_dir_torch: [N,6,128,128,3] no need to unsqueeze or...
     :param result: [N,6,128,128,1] or [N,6,128,128]
     :return:
     """
     n = normal_directions.shape[0]
     normal_reshaped = normal_directions.view(n,1,1,1,3)
-    element_wise_sum = normal_reshaped * texel_dir_torch.unsqueeze(0)
+    element_wise_sum = normal_reshaped * texel_dir_torch
     cosine = torch.sum(element_wise_sum,dim=-1,keepdim=True)
     result_clipped = torch.where(cosine > 0, result, 0.0)
     return result_clipped

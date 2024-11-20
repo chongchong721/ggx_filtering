@@ -4,7 +4,6 @@ import map_util
 import mat_util
 from datetime import datetime
 
-from py_test.torch_util import texel_dir_128_torch
 from reference import compute_ggx_ndf_reference,compute_ggx_ndf_reference_torch_vectorized,compute_ggx_ndf_reference_half_vector_torch_vectorized,compute_ggx_ndf_ref_view_dependent_torch_vectorized
 
 import scipy
@@ -1208,7 +1207,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                 #                                                                                     ref_list,weight_per_frame,xyz_per_frame,
                 #                                                                                     theta_phi_per_frame,view_theta_list,params,constant,
                 #                                                                                     adjust_level, allow_neg_weight, view_option_str ,device)
-                tmp_pushed_back_result = torch_util.clip_below_horizon_part_view_dependent(all_locations,tmp_pushed_back_result, texel_dir_128_torch)
+                tmp_pushed_back_result = torch_util.clip_below_horizon_part_view_dependent(all_locations,tmp_pushed_back_result,tex_directions_res)
             # normalize pushed_back result
             tmp_pushed_back_sum = torch.sum(tmp_pushed_back_result, dim=[1, 2, 3, 4], keepdim=True)
             tmp_pushed_back_result /= (tmp_pushed_back_sum + 1e-7)

@@ -392,8 +392,6 @@ def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_direct
     If we do this, after push back, we also need to clip the below horizon part.
 
     """
-    if ggx_alpha > 1.0:
-        raise NotImplementedError
     #normal_direction_normalized = normal_directions / torch.linalg.norm(normal_directions, dim=-1, keepdim=True)
     half_vec = torch_util.get_all_half_vector_torch_vectorized(view_direction,directions)
     cosine = torch.einsum('bl,bijkl->bijk', normal_directions, half_vec)

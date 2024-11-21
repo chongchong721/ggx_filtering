@@ -12,6 +12,24 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 texel_dir_128_torch_map = torch.from_numpy(map_util.texel_directions(128).astype(np.float32)).to(device)
 texel_dir_128_torch = texel_dir_128_torch_map / torch.linalg.norm(texel_dir_128_torch_map, dim=-1, keepdim=True).to(device)
 
+
+class QuadModel_View_Relative_Frame_Full_Interaction(torch.nn.Module):
+    """
+    Add more interactions between u,v,theta
+
+    c0 + c1 * u_normal^2 + c2 * v_normal^2 + c3 * u_reflected^2 + c4 * v_reflected^2
+    + c5 * view_theta^2 + c6 * view_theta + c7 * u_normal^2 * view_theta + c8 * v_normal^2 * view_theta
+    + c9 * u_reflected^2 * theta + c10 * v_reflected^2 * theta
+    """
+    def __init__(self, n_sample_per_frame):
+        super(QuadModel_View_Relative_Frame_Full_Interaction, self).__init__()
+        self.params = torch.nn.Parameter(torch.rand(5,11,n_sample_per_frame), requires_grad=True)
+
+    def forward(self):
+        return self.params
+
+
+
 class QuadModel_View_Relative_Frame_Full(torch.nn.Module):
     """
     Similar to QuadModel_View_Relative_Frame,
@@ -166,7 +184,8 @@ def create_view_model_dict():
         "odd":QuadModel_View_Odd,
         "reflect_norm":QuadModel_View_Reflection_Norm,
         "relative_frame":QuadModel_View_Relative_Frame,
-        "relative_frame_full":QuadModel_View_Relative_Frame_Full
+        "relative_frame_full":QuadModel_View_Relative_Frame_Full,
+        "relative_frame_full_interaction":QuadModel_View_Relative_Frame_Full_Interaction
     }
 
     return view_model_dict
@@ -1209,6 +1228,7 @@ def compute_contribution(location, level, initial_weight, n_level):
 def random_dir_hemisphere(uv = None, n_dir = 1):
     if uv is None:
         g = torch.Generator()
+        g.seed()
         u = torch.rand(n_dir,generator=g, device = device)
         v = torch.rand(n_dir,generator=g, device = device)
     else:
@@ -1228,6 +1248,7 @@ def random_dir_hemisphere(uv = None, n_dir = 1):
 def random_dir_sphere(uv = None, n_dir = 1):
     if uv is None:
         g = torch.Generator()
+        g.seed()
         u = torch.rand(n_dir,generator=g, device = device)
         v = torch.rand(n_dir,generator=g, device = device)
     else:

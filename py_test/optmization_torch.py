@@ -33,7 +33,7 @@ from filter import synthetic_filter_showcase
 
 
 def process_view_option(view_option_str:str,view_reflection_parameterization:bool):
-    valid_option = ["view_only","even_only",'odd',"reflect_norm","relative_frame","relative_frame_full"]
+    valid_option = ["view_only","even_only",'odd',"reflect_norm","relative_frame","relative_frame_full","relative_frame_full_interaction"]
     if view_option_str.lower() in valid_option:
         view_dependent = True
     else:
@@ -68,6 +68,12 @@ def process_cmd():
                         default=False,
                         help='Whether to generate theta phi according to reflected directions'
                         )
+    parser.add_argument("-vclip", "--view-ndf-clipping",type=str2bool, nargs='?',
+                        const=True,
+                        default=False,
+                        help='Whether to clip below horizon ndf during optimization'
+                        )
+
     parser.add_argument("-s", "--shuffle", type=str2bool,
                         nargs='?',
                         const=True,
@@ -128,11 +134,12 @@ def process_cmd():
     lr = args.learning_rate
     view_option = args.view
     view_reflection_parameterization = args.view_reflection_parameterization
+    view_ndf_cliping = args.view_ndf_clipping
 
     if ggx_alpha_input is not None and ggx_level is not None:
         raise ValueError('ggx_alpha and ggx_level cannot be both specified.')
 
-    return n_sample_per_frame,ndir, ggx_level if ggx_level is not None else ggx_alpha_input, constant, adjust_level, optimizer, random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr, view_option, view_reflection_parameterization
+    return n_sample_per_frame,ndir, ggx_level if ggx_level is not None else ggx_alpha_input, constant, adjust_level, optimizer, random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr, view_option, view_reflection_parameterization, view_ndf_cliping
 
 
 
@@ -348,6 +355,54 @@ def multiple_texel_full_optimization_view_dependent_vectorized(n_sample_per_fram
 
 
 
+def stack_parameter(view_option_str, view_theta,view_theta2,theta_phi_normal_tensor,theta_phi_reflection_tensor,frame_idx, use_reflection_parameterization):
+    if view_option_str == "even_only":
+        theta2_normal = theta_phi_normal_tensor[frame_idx, 2, :]
+        phi2_normal = theta_phi_normal_tensor[frame_idx, 3, :]
+        parameter = torch.stack((theta2_normal, phi2_normal, view_theta2, view_theta))
+    elif view_option_str == "odd":
+        theta2_normal = theta_phi_normal_tensor[frame_idx, 2, :]
+        phi2_normal = theta_phi_normal_tensor[frame_idx, 3, :]
+        parameter = torch.stack(
+            (theta2_normal, phi2_normal, view_theta2, view_theta, view_theta * theta2_normal, view_theta * phi2_normal))
+    elif view_option_str == "view_only":
+        parameter = torch.stack((view_theta2, view_theta))
+    elif view_option_str == "reflect_norm":
+        theta2_normal = theta_phi_normal_tensor[frame_idx, 2, :]
+        phi2_normal = theta_phi_normal_tensor[frame_idx, 3, :]
+        theta2_reflection = theta_phi_reflection_tensor[frame_idx, 2, :]
+        phi2_reflection = theta_phi_reflection_tensor[frame_idx, 3, :]
+        parameter = torch.stack(
+            (theta2_normal, phi2_normal, theta2_reflection, phi2_reflection, view_theta2, view_theta))
+    elif view_option_str == "relative_frame":
+        if use_reflection_parameterization:
+            theta2 = theta_phi_reflection_tensor[frame_idx, 2, :]
+            phi2 = theta_phi_reflection_tensor[frame_idx, 3, :]
+        else:
+            theta2 = theta_phi_normal_tensor[frame_idx, 2, :]
+            phi2 = theta_phi_normal_tensor[frame_idx, 3, :]
+        parameter = torch.stack((theta2, phi2, view_theta2, view_theta))
+    elif view_option_str == "relative_frame_full":
+        theta2_normal = theta_phi_normal_tensor[frame_idx, 2, :]
+        phi2_normal = theta_phi_normal_tensor[frame_idx, 3, :]
+        theta2_reflection = theta_phi_reflection_tensor[frame_idx, 2, :]
+        phi2_reflection = theta_phi_reflection_tensor[frame_idx, 3, :]
+        parameter = torch.stack(
+            (theta2_normal, phi2_normal, theta2_reflection, phi2_reflection, view_theta2, view_theta))
+    elif view_option_str == "relative_frame_full_interaction":
+        theta2_normal = theta_phi_normal_tensor[frame_idx, 2, :]
+        phi2_normal = theta_phi_normal_tensor[frame_idx, 3, :]
+        theta2_reflection = theta_phi_reflection_tensor[frame_idx, 2, :]
+        phi2_reflection = theta_phi_reflection_tensor[frame_idx, 3, :]
+        parameter = torch.stack(
+            (theta2_normal, phi2_normal, theta2_reflection, phi2_reflection, view_theta2, view_theta,
+             view_theta * theta2_normal, view_theta * phi2_normal, view_theta * theta2_reflection, view_theta * phi2_reflection)
+        )
+    else:
+        raise NotImplementedError
+
+    return parameter
+
 
 def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sample_per_frame, n_sample_per_level, ggx_ref_list, all_params_list ,
                                                                            coef_table=None, adjust_level = False, allow_neg_weight = False,
@@ -356,7 +411,7 @@ def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sam
 
     #coefficient [5,3,n_sample_per_frame * 3]
 
-    if view_option_str != "relative_frame" and view_option_str!="relative_frame_full":
+    if view_option_str[:14] != "relative_frame" :
         weight_list, xyz_list, theta_phi_normal_list, theta_phi_reflection_list, view_theta_list = all_params_list
         #theta,phi parameter list([list(theta[200],phi,theta2,phi2)](frame0),[],[])
         frame_count = len(theta_phi_normal_list)
@@ -390,38 +445,7 @@ def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sam
         constant_tmp = coef_table[:,0,frame_idx * n_sample_per_frame: frame_idx * n_sample_per_frame + n_sample_per_frame]
         constant_tmp = constant_tmp.repeat(1,n_sample_per_level)
 
-        if view_option_str == "even_only":
-            theta2_normal = theta_phi_normal_tensor[frame_idx, 2, :]
-            phi2_normal = theta_phi_normal_tensor[frame_idx, 3, :]
-            parameter = torch.stack((theta2_normal,phi2_normal,view_theta2,view_theta))
-        elif view_option_str == "odd":
-            theta2_normal = theta_phi_normal_tensor[frame_idx, 2, :]
-            phi2_normal = theta_phi_normal_tensor[frame_idx, 3, :]
-            parameter = torch.stack((theta2_normal,phi2_normal,view_theta2,view_theta,view_theta * theta2_normal ,view_theta * phi2_normal))
-        elif view_option_str == "view_only":
-            parameter = torch.stack((view_theta2,view_theta))
-        elif view_option_str == "reflect_norm":
-            theta2_normal = theta_phi_normal_tensor[frame_idx, 2, :]
-            phi2_normal = theta_phi_normal_tensor[frame_idx, 3, :]
-            theta2_reflection = theta_phi_reflection_tensor[frame_idx, 2, :]
-            phi2_reflection = theta_phi_reflection_tensor[frame_idx, 3, :]
-            parameter = torch.stack((theta2_normal, phi2_normal, theta2_reflection, phi2_reflection,view_theta2,view_theta))
-        elif view_option_str == "relative_frame":
-            if use_reflection_parameterization:
-                theta2 = theta_phi_reflection_tensor[frame_idx, 2, :]
-                phi2 = theta_phi_reflection_tensor[frame_idx, 3, :]
-            else:
-                theta2 = theta_phi_normal_tensor[frame_idx, 2, :]
-                phi2 = theta_phi_normal_tensor[frame_idx, 3, :]
-            parameter = torch.stack((theta2, phi2,view_theta2,view_theta))
-        elif view_option_str == "relative_frame_full":
-            theta2_normal = theta_phi_normal_tensor[frame_idx, 2, :]
-            phi2_normal = theta_phi_normal_tensor[frame_idx, 3, :]
-            theta2_reflection = theta_phi_reflection_tensor[frame_idx, 2, :]
-            phi2_reflection = theta_phi_reflection_tensor[frame_idx, 3, :]
-            parameter = torch.stack((theta2_normal,phi2_normal,theta2_reflection, phi2_reflection,view_theta2,view_theta))
-        else:
-            raise NotImplementedError
+        parameter = stack_parameter(view_option_str,view_theta,view_theta2, theta_phi_normal_tensor, theta_phi_reflection_tensor, frame_idx, use_reflection_parameterization)
 
         outer = non_const_coef.unsqueeze(-1) * parameter.unsqueeze(0).unsqueeze(2)
 
@@ -968,7 +992,7 @@ def precompute_opt_info_view_dependent(texel_directions,n_sample_per_level,view_
 
     texel_directions_normalized = texel_directions / torch.linalg.norm(texel_directions, dim=-1, keepdim=True)
 
-    if view_option_str != "relative_frame" and view_option_str != "relative_frame_full":
+    if view_option_str[:14] != "relative_frame":
         weight_per_frame = []
         xyz_per_frame = []
         theta_phi_normal_per_frame = []
@@ -1036,7 +1060,7 @@ def precompute_opt_info(texel_directions, n_sample_per_level):
 def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False,
                                 vectorize = True, optimizer_type = "adam", random_shuffle = False, allow_neg_weight = False,
                                 ggx_ref_jac_weight = False, learning_rate = 1e-4, view_option_str = "None"
-                                ,view_reflection_parameterization = False):
+                                ,view_reflection_parameterization = False, view_ndf_clipping = False):
     """
     To speed up, a lot of things can be precomputed, including the relative XYZ,the frame weight_g
     we don't have to compute this in every iteration
@@ -1055,7 +1079,8 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                                      random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight,
                                      ggx_ref_jac_weight=ggx_ref_jac_weight,
                                      view_dependent=view_dependent, view_option_str=view_option_str
-                                     ,reflection_parameterization=view_reflection_parameterization)
+                                     ,reflection_parameterization=view_reflection_parameterization,
+                                     view_ndf_clipping=view_ndf_clipping)
     log_name = "./logs/" + log_name
 
     logging.basicConfig(filename=log_name, filemode='a', level=logging.INFO,
@@ -1067,7 +1092,8 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
         dir_name = map_util.dir_filename(ggx_alpha, constant, n_sample_per_frame, n_sample_per_level, adjust_level,
                                          optimizer_type, allow_neg_weight=allow_neg_weight,
                                          ggx_ref_jac_weight=ggx_ref_jac_weight, view_dependent=view_dependent,view_option_str=view_option_str
-                                         ,reflection_parameterization=view_reflection_parameterization)
+                                         ,reflection_parameterization=view_reflection_parameterization,
+                                         view_ndf_clipping=view_ndf_clipping)
         if view_dependent:
             view_dirs, view_theta, all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level, torch.manual_seed(rng.integers(low=1,high=425124123)), no_parallel= True)
             torch.save(torch.concatenate(view_dirs,all_locations_cube),dir_name)
@@ -1091,7 +1117,8 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                                          random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight,
                                          ggx_ref_jac_weight=ggx_ref_jac_weight,
                                          view_dependent=view_dependent, view_option_str=view_option_str,
-                                         reflection_parameterization=view_reflection_parameterization)
+                                         reflection_parameterization=view_reflection_parameterization,
+                                         view_ndf_clipping=view_ndf_clipping)
 
 
     if view_dependent:
@@ -1179,7 +1206,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                 all_precomputed_info = precompute_opt_info(all_locations_cube,n_sample_per_level)
                 ref_list = compute_ggx_ndf_reference_half_vector_torch_vectorized(128, ggx_alpha, all_locations, tex_directions_res, tex_directions_res_map, ggx_ref_jac_weight)
             else:
-                ref_list = compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, all_locations, tex_directions_res, tex_directions_res_map, view_dirs, ggx_ref_jac_weight)
+                ref_list = compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, all_locations, tex_directions_res, tex_directions_res_map, view_dirs, ggx_ref_jac_weight, view_ndf_clipping)
                 all_precomputed_info = precompute_opt_info_view_dependent(all_locations_cube,
                             n_sample_per_level, view_dirs, view_theta, view_reflection_parameterization, view_option_str, device=device)
 
@@ -1223,7 +1250,8 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                 #                                                                                     ref_list,weight_per_frame,xyz_per_frame,
                 #                                                                                     theta_phi_per_frame,view_theta_list,params,constant,
                 #                                                                                     adjust_level, allow_neg_weight, view_option_str ,device)
-                tmp_pushed_back_result = torch_util.clip_below_horizon_part_view_dependent(all_locations,tmp_pushed_back_result,tex_directions_res)
+                if view_ndf_clipping:
+                    tmp_pushed_back_result = torch_util.clip_below_horizon_part_view_dependent(all_locations,tmp_pushed_back_result,tex_directions_res)
             # normalize pushed_back result
             tmp_pushed_back_sum = torch.sum(tmp_pushed_back_result, dim=[1, 2, 3, 4], keepdim=True)
             tmp_pushed_back_result /= (tmp_pushed_back_sum + 1e-7)
@@ -1848,7 +1876,7 @@ def test_vectorized_multiple_opt(ggx_alpha):
 if __name__ == "__main__":
     print("CUDA Availability:",torch.cuda.is_available())
 
-    n_sample_per_frame,n_sample_per_level, ggx_info, flag_constant, flag_adjust_level, optimizer_string, random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr, view_option, view_reflection_parameterization_g =  process_cmd()
+    n_sample_per_frame,n_sample_per_level, ggx_info, flag_constant, flag_adjust_level, optimizer_string, random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr, view_option, view_reflection_parameterization_g , view_ndf_clipping_g=  process_cmd()
     #
     if isinstance(ggx_info, int):
         import specular
@@ -1864,7 +1892,8 @@ if __name__ == "__main__":
           "Allow negative weight:{},\n"
           "Use Jacobian weighted ggx as reference:{}\n"
           "View dependency Option:{}\n"
-          "Parameterize using reflected direction:{}".format(ggx_alpha,n_sample_per_level,n_sample_per_frame,flag_adjust_level,flag_constant,optimizer_string,lr,random_shuffle,allow_neg_weight, ggx_ref_jac_weight,view_option,view_reflection_parameterization_g))
+          "Parameterize using reflected direction:{}"
+          "Clipping below horizong ndf:{}".format(ggx_alpha,n_sample_per_level,n_sample_per_frame,flag_adjust_level,flag_constant,optimizer_string,lr,random_shuffle,allow_neg_weight, ggx_ref_jac_weight,view_option,view_reflection_parameterization_g,view_ndf_clipping_g))
 
     # #test_vectorized_multiple_opt(ggx_alpha)
     #
@@ -1881,7 +1910,8 @@ if __name__ == "__main__":
     optimize_multiple_locations(n_sample_per_level,flag_constant,n_sample_per_frame, ggx_alpha, adjust_level=flag_adjust_level,
                                 vectorize=True, optimizer_type=optimizer_string, random_shuffle=random_shuffle,
                                 allow_neg_weight=allow_neg_weight, ggx_ref_jac_weight=ggx_ref_jac_weight,
-                                view_option_str=view_option ,learning_rate=lr,view_reflection_parameterization=view_reflection_parameterization_g)
+                                view_option_str=view_option ,learning_rate=lr,view_reflection_parameterization=view_reflection_parameterization_g,
+                                view_ndf_clipping=view_ndf_clipping_g)
     #optimize_function()
 
     # dummy location

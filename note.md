@@ -209,3 +209,6 @@ anisotropy of kernel. Horizon clipping?
 Change axis, make X/Y match the anisotropic direction? -> The axis should be on the same plane with h,l,v. And it should be perpendicular to l?
 
 Parameterization if there is no frame?
+-> using both normal and reflected direction -> lower loss?
+
+change default setting from clipping to not clipping view ndf

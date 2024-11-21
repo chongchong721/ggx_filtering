@@ -294,7 +294,7 @@ def lambda_isotropic_torch_vectorized(ggx_alpha, directions, normal_directions):
     return l
 
 
-def vndf_isotropic_torch_vectorized(view_directions, normal_directions, directions, directions_map ,ggx_alpha):
+def vndf_isotropic_torch_vectorized(view_directions, normal_directions, directions, directions_map ,ggx_alpha, clip_ndf = False):
     """
     :param view_directions: [N,3]
     :param normal_directions: [N,3]
@@ -306,13 +306,13 @@ def vndf_isotropic_torch_vectorized(view_directions, normal_directions, directio
     half_vectors = half_vectors / torch.linalg.norm(half_vectors, dim = -1, keepdim = True)
 
     g1 = g1_isotropic_torch_vectorized(ggx_alpha,view_directions,normal_directions,half_vectors)
-    ndf = compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha,normal_directions,directions,directions_map,view_directions,False)
+    ndf = compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha,normal_directions,directions,directions_map,view_directions,False, clip_ndf=clip_ndf)
     cos = torch.abs(torch.sum(view_directions.view(view_directions.shape[0], 1, 1, 1, 3) * half_vectors,dim=-1))
     result = g1 * ndf * cos / torch.sum(view_directions * normal_directions,dim=-1).view(view_directions.shape[0], 1, 1, 1)
 
-    zero_condition = torch.sum(normal_directions.view(view_directions.shape[0], 1, 1, 1, 3) * half_vectors, dim = -1) < 0.0
-
-    result[zero_condition] = 0.0
+    # # If m below horizon, clip? This might already be covered by heaviside function
+    # zero_condition = torch.sum(normal_directions.view(view_directions.shape[0], 1, 1, 1, 3) * half_vectors, dim = -1) < 0.0
+    # result[zero_condition] = 0.0
 
     # #Test the first and second item vndf
     # for i in range(2):
@@ -350,7 +350,7 @@ def vndf_isotropic_torch_vectorized(view_directions, normal_directions, directio
 
 
 
-def compute_ggx_vndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_directions, directions, directions_map, view_direction, apply_jacobian = False):
+def compute_ggx_vndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_directions, directions, directions_map, view_direction, apply_jacobian = False, clip_ndf = False):
     """
     Compute VNDF(visible NDF)
     :param ggx_alpha:
@@ -367,13 +367,14 @@ def compute_ggx_vndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_direc
         j = torch_util.torch_jacobian_vertorized(directions_map)
         vndf = vndf * j
 
-    vndf = torch_util.clip_below_horizon_part_view_dependent(normal_directions, vndf, texel_dir_128_torch)
+    if clip_ndf:
+        vndf = torch_util.clip_below_horizon_part_view_dependent(normal_directions, vndf, texel_dir_128_torch)
 
     return vndf
 
 
 
-def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_directions, directions, directions_map, view_direction, apply_jacobian = False):
+def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_directions, directions, directions_map, view_direction, apply_jacobian = False, clip_ndf = False):
     """
     :param ggx_alpha:
     :param normal_directions: in shape of [N,3]
@@ -404,7 +405,8 @@ def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_direct
 
     ndf = ndf.reshape(ndf.shape + (1,))
 
-    ndf = torch_util.clip_below_horizon_part_view_dependent(normal_directions, ndf, directions)
+    if clip_ndf:
+        ndf = torch_util.clip_below_horizon_part_view_dependent(normal_directions, ndf, directions)
 
     return ndf
 

@@ -517,18 +517,13 @@ def plot_nvl_vector(n_normalized,v_normalized,reflect_normalized,light_vectors_n
         color='green', label='Reflect Vector (r)', length=1.0, normalize=True, pivot = 'tail'
     )
 
-    ax.quiver(
-        origin[0], origin[1], origin[2],
-        X_frame[0], X_frame[1], X_frame[2],
-        color='black', label='relative x frame', length=1.0, normalize=True, pivot = 'tail'
-    )
 
     # Plot Light Vectors (Yellow)
     for idx, l in enumerate(light_vectors_normalized):
         ax.quiver(
             origin[0], origin[1], origin[2],
             l[0], l[1], l[2],
-            color='yellow', label=f'Light Vector {idx + 1}' if idx == 0 else "",
+            color='black', label=f'Light Vector {idx + 1}' if idx == 0 else "",
             # Label only the first to avoid duplicates
             length=all_weights[idx] if all_weights[idx] > 0.0 else 0.0, normalize=True, pivot = 'tail'
         )

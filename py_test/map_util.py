@@ -14,7 +14,7 @@ def get_reflected_vector_vectorized(n: np.ndarray, wi: np.ndarray):
     """
 
     :param n: [N,3] or [3,] normal, should be normalized
-    :param wi: [N,3]  in most cases, wi we have is the direction that is pointing outward. Need to negate it
+    :param wi: [N,3] or [3,]  in most cases, wi we have is the direction that is pointing outward. Need to negate it
     :return:
     """
     if wi.ndim == 1:
@@ -57,8 +57,9 @@ def rotate_90degree_awayfrom_n(vectors,normals):
 
 
 
-    if np.any(near_parallel):
-        raise NotImplementedError
+    # if np.any(near_parallel):
+    #     raise NotImplementedError
+    rotated_vectors = rotated_vectors / np.linalg.norm(rotated_vectors, axis = -1, keepdims = True)
 
     return rotated_vectors
 
@@ -684,7 +685,9 @@ def gen_theta_phi_no_frame(facex_xyz):
 
 
 
-def log_filename(ggx_alpha, n_sample_per_frame ,n_sample_per_level,constant,adjust_level, optim_method:str , random_shuffle = False, allow_neg_weight = False, ggx_ref_jac_weight = False,view_dependent = False,view_option_str = "None",reflection_parameterization = False,post_fix_for_dirs = None):
+def log_filename(ggx_alpha, n_sample_per_frame ,n_sample_per_level,constant,adjust_level, optim_method:str ,
+                 random_shuffle = False, allow_neg_weight = False, ggx_ref_jac_weight = False,view_dependent = False,
+                 view_option_str = "None",reflection_parameterization = False,view_ndf_clipping = False,post_fix_for_dirs = None):
     log_name = 'optim_info_multi_ggx_' + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
 
     if constant:
@@ -697,6 +700,8 @@ def log_filename(ggx_alpha, n_sample_per_frame ,n_sample_per_level,constant,adju
         log_name = log_name + "_" + view_option_str
         if reflection_parameterization:
             log_name = log_name + "_reflectParam"
+        if view_ndf_clipping:
+            log_name = log_name + "_ndfclip"
 
     if adjust_level:
         log_name = log_name + "_ladj"
@@ -719,7 +724,9 @@ def log_filename(ggx_alpha, n_sample_per_frame ,n_sample_per_level,constant,adju
 
     return log_name
 
-def dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optim_method:str , allow_neg_weight = False, ggx_ref_jac_weight = False,view_dependent = False,view_option_str = "None",reflection_parameterization = False,post_fix_for_dirs = None):
+def dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optim_method:str ,
+                 allow_neg_weight = False, ggx_ref_jac_weight = False,view_dependent = False,view_option_str = "None",
+                 reflection_parameterization = False,view_ndf_clipping = False,post_fix_for_dirs = None):
     if constant:
         dir_name = "constant"+ str(n_sample_per_frame)  + "_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
     else:
@@ -730,6 +737,8 @@ def dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, ad
         dir_name = dir_name + "_" + view_option_str
         if reflection_parameterization:
             dir_name = dir_name + "_reflectParam"
+        if view_ndf_clipping:
+            dir_name = dir_name + "_ndfclip"
 
     if adjust_level:
         dir_name = dir_name + "_ladj"
@@ -749,7 +758,10 @@ def dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, ad
 
     return dir_name
 
-def model_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optim_method:str , random_shuffle = False, allow_neg_weight = False, ggx_ref_jac_weight = False,view_dependent = False,view_option_str = "None",reflection_parameterization = False,post_fix_for_dirs = None):
+def model_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optim_method:str ,
+                   random_shuffle = False, allow_neg_weight = False, ggx_ref_jac_weight = False,
+                   view_dependent = False,view_option_str = "None",reflection_parameterization = False,view_ndf_clipping = False,
+                   post_fix_for_dirs = None):
     if constant:
         model_name = "constant"+ str(n_sample_per_frame)  + "_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
     else:
@@ -760,6 +772,8 @@ def model_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, 
         model_name = model_name + "_" + view_option_str
         if reflection_parameterization:
             model_name = model_name + "_reflectParam"
+        if view_ndf_clipping:
+            model_name = model_name + "_ndfclip"
 
     if adjust_level:
         model_name = model_name + "_ladj"

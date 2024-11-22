@@ -32,7 +32,7 @@ def gen_tex_levels(n_level,n_high_res):
 
 
 
-def fetch_sample_view_dependent_python_table(tex_input,output_level, coeff_table, n_sample_per_frame ,follow_code = False, constant = True, j_adjust = True, allow_neg_weight = False, view_option_str="None",view_direction = np.array([1.0,0.0,0.0]), reflection_parameterization = False):
+def fetch_sample_view_dependent_python_table(tex_input,output_level, coeff_table, n_sample_per_frame ,follow_code = False, constant = True, j_adjust = True, allow_neg_weight = False, view_option_str="None",view_direction = np.array([1.0,0.0,0.0]), reflection_parameterization = False, clip_below_horizon = False):
     coefficient_table = coeff_table
     interpolator = interpolation.trilinear_mipmap_interpolator(tex_input)
 
@@ -50,7 +50,7 @@ def fetch_sample_view_dependent_python_table(tex_input,output_level, coeff_table
     color = np.zeros((6, n_res, n_res, 3))
     weight = np.zeros((6, n_res, n_res))
 
-    if view_option_str == "relative_frame" or view_option_str == "relative_frame_full":
+    if view_option_str[:14] == "relative_frame":
         frame_count = 1
     else:
         frame_count = 3
@@ -61,7 +61,7 @@ def fetch_sample_view_dependent_python_table(tex_input,output_level, coeff_table
     for frame_idx in range(frame_count):
 
 
-        if view_option_str == "relative_frame" or view_option_str == "relative_frame_full":
+        if view_option_str[:14] == "relative_frame":
             X,Y,Z = gen_anisotropic_frame_xyz(faces_xyz_normalized,view_direction)
             theta_normal,phi_normal,theta_normal2,phi_normal2 = gen_theta_phi_no_frame(faces_xyz)
             theta_reflection,phi_reflection,theta_reflection2,phi_reflection2 = gen_theta_phi_no_frame(reflected_direction)
@@ -132,7 +132,7 @@ def fetch_sample_view_dependent_python_table(tex_input,output_level, coeff_table
                                 coeff_weight_table[3] * view_theta2 + coeff_weight_table[4] * view_theta
             elif view_option_str == "relative_frame_full":
                 coeff_x = (coeff_x_table[0] + coeff_x_table[1] * theta_normal2 + coeff_x_table[2] * phi_normal2 +
-                           + coeff_x_table[3] * theta_reflection2 + coeff_x_table[4] + phi_reflection2 + coeff_x_table[
+                           coeff_x_table[3] * theta_reflection2 + coeff_x_table[4] + phi_reflection2 + coeff_x_table[
                     5] * view_theta2 + coeff_x_table[6] * view_theta)
                 coeff_y = (coeff_y_table[0] + coeff_y_table[1] * theta_normal2 + coeff_y_table[2] * phi_normal2 +
                            coeff_y_table[3] * theta_reflection2 + coeff_y_table[4] + phi_reflection2 + coeff_y_table[
@@ -146,6 +146,39 @@ def fetch_sample_view_dependent_python_table(tex_input,output_level, coeff_table
                 sample_weight = (coeff_weight_table[0] + coeff_weight_table[1] * theta_normal2 + coeff_weight_table[2] * phi_normal2 +
                                 coeff_weight_table[3] * theta_reflection2 + coeff_weight_table[4] + phi_reflection2 +
                                 coeff_weight_table[5] * view_theta2 + coeff_weight_table[6] * view_theta)
+            elif view_option_str == "relative_frame_full_interaction":
+                coeff_x = (coeff_x_table[0] + coeff_x_table[1] * theta_normal2 + coeff_x_table[2] * phi_normal2 +
+                           coeff_x_table[3] * theta_reflection2 + coeff_x_table[4] + phi_reflection2 + coeff_x_table[
+                               5] * view_theta2 + coeff_x_table[6] * view_theta + coeff_x_table[
+                               7] * theta_normal2 * view_theta + coeff_x_table[8] * phi_normal2 * view_theta +
+                           coeff_x_table[9] * theta_reflection2 * view_theta + coeff_x_table[
+                               10] * phi_reflection2 * view_theta)
+                coeff_y = (coeff_y_table[0] + coeff_y_table[1] * theta_normal2 + coeff_y_table[2] * phi_normal2 +
+                           coeff_y_table[3] * theta_reflection2 + coeff_y_table[4] + phi_reflection2 + coeff_y_table[
+                               5] * view_theta2 + coeff_y_table[6] * view_theta + coeff_y_table[
+                               7] * theta_normal2 * view_theta + coeff_y_table[8] * phi_normal2 * view_theta +
+                           coeff_y_table[9] * theta_reflection2 * view_theta + coeff_y_table[
+                               10] * phi_reflection2 * view_theta)
+                coeff_z = (coeff_z_table[0] + coeff_z_table[1] * theta_normal2 + coeff_z_table[2] * phi_normal2 +
+                           coeff_z_table[3] * theta_reflection2 + coeff_z_table[4] + phi_reflection2 + coeff_z_table[
+                               5] * view_theta2 + coeff_z_table[6] * view_theta + coeff_z_table[
+                               7] * theta_normal2 * view_theta + coeff_z_table[8] * phi_normal2 * view_theta +
+                           coeff_z_table[9] * theta_reflection2 * view_theta + coeff_z_table[
+                               10] * phi_reflection2 * view_theta)
+                sample_level = (coeff_level_table[0] + coeff_level_table[1] * theta_normal2 + coeff_level_table[
+                    2] * phi_normal2 + coeff_level_table[3] * theta_reflection2 + coeff_level_table[
+                                    4] + phi_reflection2 + coeff_level_table[5] * view_theta2 + coeff_level_table[
+                                    6] * view_theta + coeff_level_table[7] * theta_normal2 * view_theta +
+                                coeff_level_table[8] * phi_normal2 * view_theta + coeff_level_table[
+                                    9] * theta_reflection2 * view_theta + coeff_level_table[
+                                    10] * phi_reflection2 * view_theta)
+                sample_weight = (coeff_weight_table[0] + coeff_weight_table[1] * theta_normal2 + coeff_weight_table[
+                    2] * phi_normal2 + coeff_weight_table[3] * theta_reflection2 + coeff_weight_table[
+                                     4] + phi_reflection2 + coeff_weight_table[5] * view_theta2 + coeff_weight_table[
+                                     6] * view_theta + coeff_weight_table[7] * theta_normal2 * view_theta +
+                                 coeff_weight_table[8] * phi_normal2 * view_theta + coeff_weight_table[
+                                     9] * theta_reflection2 * view_theta + coeff_weight_table[
+                                     10] * phi_reflection2 * view_theta)
             else:
                 raise NotImplementedError
 
@@ -183,9 +216,10 @@ def fetch_sample_view_dependent_python_table(tex_input,output_level, coeff_table
             #If this direction is below the hemisphere, we should not count it
             #By setting the weight to zero, we also make the color zero(because we have color * weight)
             sample_direction_normalized = sample_direction / np.linalg.norm(sample_direction, axis=-1,keepdims=True)
-            cosine_this_direction = np.sum(sample_direction_normalized * faces_xyz_normalized, axis=-1)
-            sample_above_horizon = (cosine_this_direction > 0.0)
-            sample_weight = np.where(sample_above_horizon, sample_weight, 0.0)
+            NdotL = np.sum(sample_direction_normalized * faces_xyz_normalized, axis=-1)
+            if clip_below_horizon:
+                sample_above_horizon = (NdotL > 0.0)
+                sample_weight = np.where(sample_above_horizon, sample_weight, 0.0)
 
 
             color += color_tmp * np.stack((sample_weight, sample_weight, sample_weight), axis=-1)
@@ -637,12 +671,72 @@ def fetch_synthetic(direction,res):
 
 
 
+def compare_view_independent_ggx_kernel(constant,adjust_level,ggx_alpha,n_sample_per_frame,level_to_test,
+                                             n_multi_loc,optimize_str,random_shuffle,allow_neg_weight, ggx_ref_jac_weight,
+                                             view_option_str, view_reflection_parameterization, clip_ndf ,synthetic = True):
+    model_name = map_util.model_filename(ggx_alpha, constant, n_sample_per_frame, n_multi_loc, adjust_level,
+                                         optimize_str, random_shuffle,
+                                         allow_neg_weight, ggx_ref_jac_weight, False, view_option_str,
+                                         view_reflection_parameterization, clip_ndf)
+
+    view_model_dict = create_view_model_dict()
+
+    if constant:
+        model = ConstantModel(n_sample_per_frame)
+    else:
+        model = QuadModel(n_sample_per_frame)
+
+    if os.path.exists("./model/" + model_name):
+        model.load_state_dict(torch.load("./model/" + model_name, map_location=torch.device('cpu')))
+    else:
+        raise NotImplementedError
+
+    params = model().cpu().detach().numpy()
+    res = 128 >> level_to_test
+
+
+    texel_dir_torch_map = torch.from_numpy(map_util.texel_directions(res).astype(np.float32))
+    texel_dir_torch = texel_dir_torch_map / torch.linalg.norm(texel_dir_torch_map, dim=-1, keepdim=True)
+
+    if synthetic:
+        test_direction = map_util.random_dir_sphere(n_dir=1)
+
+        # mipmap = interpolation.downsample_full(mipmap_l0, 7, j_inv=False)
+
+        mipmap = fetch_synthetic(test_direction, 128)
+        result = reference.compute_reference(mipmap[0], 128, res, ggx_alpha)
+        save_name = "./view_independent_test/" + "integral_synthetic_{:.3f}".format(ggx_alpha) + ".exr"
+        image_read.gen_cubemap_preview_image(result, res, filename=save_name)
+
+        fetched_filtered_result = fetch_samples_python_table(mipmap,level_to_test,params,n_sample_per_frame, constant=constant,
+                                                                           j_adjust=adjust_level,
+                                                                           allow_neg_weight=allow_neg_weight)
+
+
+        save_name = "./view_independent_test/" + "filtered_synthetic_{:.3f}".format(ggx_alpha,) + ".exr"
+        image_read.gen_cubemap_preview_image(fetched_filtered_result, res, filename=save_name)
+    else:
+        file_name = "08-21_Swiss_A.hdr"
+        mipmap_l0 = image_read.envmap_to_cubemap('exr_files/' + file_name, 128)
+
+        result = reference.compute_reference(mipmap_l0, 128, res, ggx_alpha)
+        save_name = "./view_independent_test/" + "integral_{:.3f}".format(ggx_alpha) + ".exr"
+        image_read.gen_cubemap_preview_image(result, res, filename=save_name)
+        mipmap = interpolation.downsample_full(mipmap_l0, 7, j_inv=False)
+        fetched_filtered_result = fetch_samples_python_table(mipmap, level_to_test, params, n_sample_per_frame,
+                                                             constant=constant,
+                                                             j_adjust=adjust_level,
+                                                             allow_neg_weight=allow_neg_weight)
+        save_name = "./view_independent_test/" + "filtered_{:.3f}".format(ggx_alpha) + ".exr"
+        image_read.gen_cubemap_preview_image(fetched_filtered_result, res, filename=save_name)
+
+
 
 def compare_view_dependent_ggx_kernel(constant,adjust_level,ggx_alpha,n_sample_per_frame,level_to_test,
                                              n_multi_loc,optimize_str,random_shuffle,allow_neg_weight, ggx_ref_jac_weight,
-                                             view_option_str, view_reflection_parameterization, synthetic = True):
+                                             view_option_str, view_reflection_parameterization, clip_ndf ,synthetic = True, clip_when_fetching = False):
     model_name = map_util.model_filename(ggx_alpha,constant,n_sample_per_frame,n_multi_loc,adjust_level,optimize_str,random_shuffle,
-                                         allow_neg_weight, ggx_ref_jac_weight,True,view_option_str, view_reflection_parameterization)
+                                         allow_neg_weight, ggx_ref_jac_weight,True,view_option_str, view_reflection_parameterization, clip_ndf)
 
 
     view_model_dict = create_view_model_dict()
@@ -671,43 +765,82 @@ def compare_view_dependent_ggx_kernel(constant,adjust_level,ggx_alpha,n_sample_p
 
     view_direction = X * view_direction_tmp[0][0] + Y * view_direction_tmp[0][1] + normal_direction * view_direction_tmp[0][2]
 
+
+    # #test
+    # normal_direction = torch.Tensor([[1.0,0.2,0.1]])
+    # a = torch.Tensor([[0,0,1]])
+    # normal_direction = normal_direction / torch.linalg.norm(normal_direction)
+    # view_direction = get_reflected_vector_torch_vectorized(normal_direction,a)
+    # #test-end
+
+
     texel_dir_torch_map = torch.from_numpy(map_util.texel_directions(res).astype(np.float32))
     texel_dir_torch = texel_dir_torch_map / torch.linalg.norm(texel_dir_torch_map, dim=-1, keepdim=True)
 
     if synthetic:
-        #This reference kernel is computed given a normal and a view. So the cubemap is essentially sample/light directions.
-        #For each light direction, there is a corresponding NDF computed using l+v
-        reference_kernel = reference.compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha,normal_direction,texel_dir_torch,texel_dir_torch_map,view_direction,ggx_ref_jac_weight)
-        reference_kernel = reference_kernel.cpu().detach().numpy()
-        reference_kernel = np.reshape(reference_kernel,(6,res,res,1))
-        reference_kernel = np.repeat(reference_kernel, repeats=3, axis=-1)
-        #Create a synthetic mipmap at reflected direction?
-        reflected_direction = get_reflected_vector_torch_vectorized(normal_direction.reshape((1,3)),view_direction.reshape((1,3)))
+        reflected_direction = get_reflected_vector_torch_vectorized(normal_direction.reshape((1, 3)),
+                                                                    view_direction.reshape((1, 3)))
 
         reflected_direction = reflected_direction.cpu().detach().numpy().flatten()
-        view_direction = view_direction.cpu().detach().numpy().flatten()
-        normal_direction = normal_direction.cpu().detach().numpy().flatten()
+        view_direction = view_direction.cpu().detach().numpy()
+        # mipmap = interpolation.downsample_full(mipmap_l0, 7, j_inv=False)
 
-        mipmap = fetch_synthetic(normal_direction,128)
+        mipmap = fetch_synthetic(reflected_direction, 128)
+        result = reference.compute_reference_view_dependent(mipmap[0], 128, res, info[3].roughness, view_direction)
+        save_name = "./view_dependent_test/" + "integral_synthetic_{:.3f}_{:.4f}_{:.4f}_{:.4f}".format(ggx_alpha,
+                                                                                             view_direction[0, 0],
+                                                                                             view_direction[0, 1],
+                                                                                             view_direction[
+                                                                                                 0, 2]) + ".exr"
+        image_read.gen_cubemap_preview_image(result, res, filename=save_name)
 
-        #Given a view direction, compute, for each normal in the cubemap, its best sample_directions, and fetch the color.
-        fetched_kernel = fetch_sample_view_dependent_python_table(mipmap,level_to_test,params,
+        view_direction = view_direction.flatten()
+        fetched_filtered_result = fetch_sample_view_dependent_python_table(mipmap, level_to_test, params,
+                                                                           n_sample_per_frame, constant=constant,
+                                                                           j_adjust=adjust_level,
+                                                                           allow_neg_weight=allow_neg_weight,
+                                                                           view_option_str=view_option_str,
+                                                                           view_direction=view_direction,
+                                                                           clip_below_horizon=clip_when_fetching)
+
+        save_name = "./view_dependent_test/" + "filtered_synthetic_{:.3f}_{:.4f}_{:.4f}_{:.4f}".format(ggx_alpha,
+                                                                                             view_direction[0],
+                                                                                             view_direction[1],
+                                                                                             view_direction[2]) + ".exr"
+        image_read.gen_cubemap_preview_image(fetched_filtered_result, res, filename=save_name)
+    else:
+        reflected_direction = get_reflected_vector_torch_vectorized(normal_direction.reshape((1, 3)),
+                                                                    view_direction.reshape((1, 3)))
+
+
+        print("Test view_theta:{:.4f}pi".format(np.arccos(view_direction_tmp[0,2].item()) / np.pi ))
+
+        reflected_direction = reflected_direction.cpu().detach().numpy().flatten()
+        view_direction = view_direction.cpu().detach().numpy()
+        file_name = "08-21_Swiss_A.hdr"
+        mipmap_l0 = image_read.envmap_to_cubemap('exr_files/' + file_name, 128)
+
+
+        result = reference.compute_reference_view_dependent(mipmap_l0,128, res, info[3].roughness, view_direction)
+        save_name = "./view_dependent_test/" + "integral_{:.3f}_{:.4f}_{:.4f}_{:.4f}".format(ggx_alpha,view_direction[0, 0], view_direction[0, 1],
+                                                                            view_direction[0, 2]) + ".exr"
+        image_read.gen_cubemap_preview_image(result, res, filename=save_name)
+
+        view_direction = view_direction.flatten()
+        mipmap = interpolation.downsample_full(mipmap_l0, 7, j_inv=False)
+        fetched_filtered_result = fetch_sample_view_dependent_python_table(mipmap,level_to_test,params,
                                                                   n_sample_per_frame,constant=constant,
                                                                   j_adjust=adjust_level,allow_neg_weight=allow_neg_weight,
-                                                                  view_option_str=view_option_str,view_direction=view_direction)
+                                                                  view_option_str=view_option_str,view_direction=view_direction,
+                                                                           clip_below_horizon=clip_when_fetching)
 
-        #Normalize
-        fetched_kernel /= np.sum(fetched_kernel)
-        reference_kernel /= np.sum(reference_kernel)
-
-        fetched_kernel *= 10
-        reference_kernel *= 10
-    else:
-        pass
+        save_name = "./view_dependent_test/" + "filtered_{:.3f}_{:.4f}_{:.4f}_{:.4f}".format(ggx_alpha,view_direction[0], view_direction[1],
+                                                                            view_direction[2]) + ".exr"
+        image_read.gen_cubemap_preview_image(fetched_filtered_result, res, filename=save_name)
 
 
-    image_read.gen_cubemap_preview_image(fetched_kernel, res, filename ="view_filtered_one_pixel.exr")
-    image_read.gen_cubemap_preview_image(reference_kernel,res, filename="view_reference_one_pixel.exr")
+
+
 
 
 
@@ -755,105 +888,131 @@ def visualize_view_dependent_filter_sample_directions(constant,adjust_level,ggx_
     random_number = rng.integers(low = 1, high = 124451251,size = 1)
     g = torch.manual_seed(random_number[0])
 
-    for _ in range(50):
-        view_direction, view_theta ,xyz_cube, xyz = sample_view_dependent_location(1,g,True)
 
-        view_direction = view_direction.cpu().detach().numpy().reshape((1,3))
-        normal_direction = xyz.cpu().detach().numpy().reshape((1,3))
+    view_direction, view_theta ,xyz_cube, xyz = sample_view_dependent_location(1,g,True)
 
-
-        X,Y,Z = gen_anisotropic_frame_xyz(normal_direction,view_direction)
-        theta,phi,theta2,phi2 = gen_theta_phi_no_frame(normal_direction)
-        cosine_view = np.dot(normal_direction.flatten(),view_direction.flatten())
-        reflected_direction = map_util.get_reflected_vector_vectorized(normal_direction,view_direction)
-
-        X_frame = X.flatten()
-
-        #mask_above_horizon = cosine_view > 0.0
-
-        view_theta = np.arccos(cosine_view)
-        view_theta2 = view_theta ** 2
-
-        all_directions = []
-        all_weights= []
-
-        theta_normal, phi_normal, theta_normal2, phi_normal2 = gen_theta_phi_no_frame(normal_direction)
-        theta_reflection, phi_reflection, theta_reflection2, phi_reflection2 = gen_theta_phi_no_frame(reflected_direction)
+    view_direction = view_direction.cpu().detach().numpy().reshape((1,3))
+    normal_direction = xyz.cpu().detach().numpy().reshape((1,3))
 
 
-        for sample_idx in range(n_sample_per_frame):
+    X,Y,Z = gen_anisotropic_frame_xyz(normal_direction,view_direction)
+    theta,phi,theta2,phi2 = gen_theta_phi_no_frame(normal_direction)
+    cosine_view = np.dot(normal_direction.flatten(),view_direction.flatten())
+    reflected_direction = map_util.get_reflected_vector_vectorized(normal_direction,view_direction)
+
+    X_frame = X.flatten()
+
+    #mask_above_horizon = cosine_view > 0.0
+
+    view_theta = np.arccos(cosine_view)
+    view_theta2 = view_theta ** 2
+
+    all_directions = []
+    all_weights= []
+
+    theta_normal, phi_normal, theta_normal2, phi_normal2 = gen_theta_phi_no_frame(normal_direction)
+    theta_reflection, phi_reflection, theta_reflection2, phi_reflection2 = gen_theta_phi_no_frame(reflected_direction)
 
 
-            coeff_x_table = coefficient_table[0, :, sample_idx]
-            coeff_y_table = coefficient_table[1, :, sample_idx]
-            coeff_z_table = coefficient_table[2, :, sample_idx]
-            coeff_level_table = coefficient_table[3, :, sample_idx]
-            coeff_weight_table = coefficient_table[4, :, sample_idx]
-
-            if view_option_str == "relative_frame":
-                coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2 + coeff_x_table[
-                    3] * view_theta2 + coeff_x_table[4] * view_theta
-                coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2 + coeff_y_table[
-                    3] * view_theta2 + coeff_y_table[4] * view_theta
-                coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2 + coeff_z_table[
-                    3] * view_theta2 + coeff_z_table[4] * view_theta
-                sample_weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2 + \
-                                coeff_weight_table[3] * view_theta2 + coeff_weight_table[4] * view_theta
-            elif view_option_str == "relative_frame_full":
-                coeff_x = (coeff_x_table[0] + coeff_x_table[1] * theta_normal2 + coeff_x_table[2] * phi_normal2 +
-                           + coeff_x_table[3] * theta_reflection2 + coeff_x_table[4] + phi_reflection2 + coeff_x_table[
-                               5] * view_theta2 + coeff_x_table[6] * view_theta)
-                coeff_y = (coeff_y_table[0] + coeff_y_table[1] * theta_normal2 + coeff_y_table[2] * phi_normal2 +
-                           coeff_y_table[3] * theta_reflection2 + coeff_y_table[4] + phi_reflection2 + coeff_y_table[
-                               5] * view_theta2 + coeff_y_table[6] * view_theta)
-                coeff_z = (coeff_z_table[0] + coeff_z_table[1] * theta_normal2 + coeff_z_table[2] * phi_normal2 +
-                           coeff_z_table[3] * theta_reflection2 + coeff_z_table[4] + phi_reflection2 + coeff_z_table[
-                               5] * view_theta2 + coeff_z_table[6] * view_theta)
-                sample_weight = (
-                            coeff_weight_table[0] + coeff_weight_table[1] * theta_normal2 + coeff_weight_table[2] * phi_normal2 +
-                            coeff_weight_table[3] * theta_reflection2 + coeff_weight_table[4] + phi_reflection2 +
-                            coeff_weight_table[5] * view_theta2 + coeff_weight_table[6] * view_theta)
-            else:
-                raise NotImplementedError
+    for sample_idx in range(n_sample_per_frame):
 
 
+        coeff_x_table = coefficient_table[0, :, sample_idx]
+        coeff_y_table = coefficient_table[1, :, sample_idx]
+        coeff_z_table = coefficient_table[2, :, sample_idx]
+        coeff_level_table = coefficient_table[3, :, sample_idx]
+        coeff_weight_table = coefficient_table[4, :, sample_idx]
+
+        if view_option_str == "relative_frame":
+            coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2 + coeff_x_table[
+                3] * view_theta2 + coeff_x_table[4] * view_theta
+            coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2 + coeff_y_table[
+                3] * view_theta2 + coeff_y_table[4] * view_theta
+            coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2 + coeff_z_table[
+                3] * view_theta2 + coeff_z_table[4] * view_theta
+            sample_weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2 + \
+                            coeff_weight_table[3] * view_theta2 + coeff_weight_table[4] * view_theta
+        elif view_option_str == "relative_frame_full":
+            coeff_x = (coeff_x_table[0] + coeff_x_table[1] * theta_normal2 + coeff_x_table[2] * phi_normal2 +
+                       + coeff_x_table[3] * theta_reflection2 + coeff_x_table[4] + phi_reflection2 + coeff_x_table[
+                           5] * view_theta2 + coeff_x_table[6] * view_theta)
+            coeff_y = (coeff_y_table[0] + coeff_y_table[1] * theta_normal2 + coeff_y_table[2] * phi_normal2 +
+                       coeff_y_table[3] * theta_reflection2 + coeff_y_table[4] + phi_reflection2 + coeff_y_table[
+                           5] * view_theta2 + coeff_y_table[6] * view_theta)
+            coeff_z = (coeff_z_table[0] + coeff_z_table[1] * theta_normal2 + coeff_z_table[2] * phi_normal2 +
+                       coeff_z_table[3] * theta_reflection2 + coeff_z_table[4] + phi_reflection2 + coeff_z_table[
+                           5] * view_theta2 + coeff_z_table[6] * view_theta)
+            sample_weight = (
+                        coeff_weight_table[0] + coeff_weight_table[1] * theta_normal2 + coeff_weight_table[2] * phi_normal2 +
+                        coeff_weight_table[3] * theta_reflection2 + coeff_weight_table[4] + phi_reflection2 +
+                        coeff_weight_table[5] * view_theta2 + coeff_weight_table[6] * view_theta)
+        elif view_option_str == "relative_frame_full_interaction":
+            coeff_x = (coeff_x_table[0] + coeff_x_table[1] * theta_normal2 + coeff_x_table[2] * phi_normal2 +
+                       coeff_x_table[3] * theta_reflection2 + coeff_x_table[4] + phi_reflection2 + coeff_x_table[
+                           5] * view_theta2 + coeff_x_table[6] * view_theta + coeff_x_table[
+                           7] * theta_normal2 * view_theta + coeff_x_table[8] * phi_normal2 * view_theta +
+                       coeff_x_table[9] * theta_reflection2 * view_theta + coeff_x_table[
+                           10] * phi_reflection2 * view_theta)
+            coeff_y = (coeff_y_table[0] + coeff_y_table[1] * theta_normal2 + coeff_y_table[2] * phi_normal2 +
+                       coeff_y_table[3] * theta_reflection2 + coeff_y_table[4] + phi_reflection2 + coeff_y_table[
+                           5] * view_theta2 + coeff_y_table[6] * view_theta + coeff_y_table[
+                           7] * theta_normal2 * view_theta + coeff_y_table[8] * phi_normal2 * view_theta +
+                       coeff_y_table[9] * theta_reflection2 * view_theta + coeff_y_table[
+                           10] * phi_reflection2 * view_theta)
+            coeff_z = (coeff_z_table[0] + coeff_z_table[1] * theta_normal2 + coeff_z_table[2] * phi_normal2 +
+                       coeff_z_table[3] * theta_reflection2 + coeff_z_table[4] + phi_reflection2 + coeff_z_table[
+                           5] * view_theta2 + coeff_z_table[6] * view_theta + coeff_z_table[
+                           7] * theta_normal2 * view_theta + coeff_z_table[8] * phi_normal2 * view_theta +
+                       coeff_z_table[9] * theta_reflection2 * view_theta + coeff_z_table[
+                           10] * phi_reflection2 * view_theta)
+            sample_weight = (coeff_weight_table[0] + coeff_weight_table[1] * theta_normal2 + coeff_weight_table[
+                2] * phi_normal2 + coeff_weight_table[3] * theta_reflection2 + coeff_weight_table[
+                                 4] + phi_reflection2 + coeff_weight_table[5] * view_theta2 + coeff_weight_table[
+                                 6] * view_theta + coeff_weight_table[7] * theta_normal2 * view_theta +
+                             coeff_weight_table[8] * phi_normal2 * view_theta + coeff_weight_table[
+                                 9] * theta_reflection2 * view_theta + coeff_weight_table[
+                                 10] * phi_reflection2 * view_theta)
+        else:
+            raise NotImplementedError
 
 
 
-            # coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2 + coeff_x_table[
-            #     3] * view_theta2 + coeff_x_table[4] * view_theta
-            # coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2 + coeff_y_table[
-            #     3] * view_theta2 + coeff_y_table[4] * view_theta
-            # coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2 + coeff_z_table[
-            #     3] * view_theta2 + coeff_z_table[4] * view_theta
-            # sample_weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2 + \
-            #                 coeff_weight_table[3] * view_theta2 + coeff_weight_table[4] * view_theta
-            coeff_x = np.stack((coeff_x, coeff_x, coeff_x), axis=-1)
-            coeff_y = np.stack((coeff_y, coeff_y, coeff_y), axis=-1)
-            coeff_z = np.stack((coeff_z, coeff_z, coeff_z), axis=-1)
 
 
-            if not allow_neg_weight:
-                sample_weight = np.clip(sample_weight, 0, a_max=None)
-            sample_weight = sample_weight * 1
+        # coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2 + coeff_x_table[
+        #     3] * view_theta2 + coeff_x_table[4] * view_theta
+        # coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2 + coeff_y_table[
+        #     3] * view_theta2 + coeff_y_table[4] * view_theta
+        # coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2 + coeff_z_table[
+        #     3] * view_theta2 + coeff_z_table[4] * view_theta
+        # sample_weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2 + \
+        #                 coeff_weight_table[3] * view_theta2 + coeff_weight_table[4] * view_theta
+        coeff_x = np.stack((coeff_x, coeff_x, coeff_x), axis=-1)
+        coeff_y = np.stack((coeff_y, coeff_y, coeff_y), axis=-1)
+        coeff_z = np.stack((coeff_z, coeff_z, coeff_z), axis=-1)
 
-            sample_direction = coeff_x * X + coeff_y * Y + coeff_z * Z
-            abs_direction = np.abs(sample_direction)
-            max_dir = np.max(abs_direction, axis=-1)
-            sample_direction_map = sample_direction / np.stack([max_dir, max_dir, max_dir], axis=-1)
-            sample_direction_normalized = sample_direction / np.linalg.norm(sample_direction, axis=-1, keepdims=True)
-            if np.sum(sample_direction_normalized * normal_direction) > 0.0:
-                all_directions.append(sample_direction_normalized.flatten())
-                all_weights.append(sample_weight[0] / 10.0)
 
-        import visualization
+        if not allow_neg_weight:
+            sample_weight = np.clip(sample_weight, 0, a_max=None)
+        sample_weight = sample_weight * 1
 
-        reflect_direction = map_util.get_reflected_vector_vectorized(normal_direction,view_direction)
+        sample_direction = coeff_x * X + coeff_y * Y + coeff_z * Z
+        abs_direction = np.abs(sample_direction)
+        max_dir = np.max(abs_direction, axis=-1)
+        sample_direction_map = sample_direction / np.stack([max_dir, max_dir, max_dir], axis=-1)
+        sample_direction_normalized = sample_direction / np.linalg.norm(sample_direction, axis=-1, keepdims=True)
+        if np.sum(sample_direction_normalized * normal_direction) > 0.0:
+            all_directions.append(sample_direction_normalized.flatten())
+            all_weights.append(sample_weight[0] / 10.0)
 
-        print("valid above hemisphere sample count:{} over {}".format(len(all_directions),n_sample_per_frame))
+    import visualization
 
-        # visualization.plot_nvl_vector(normal_direction.flatten(),view_direction.flatten(),
-        #                               reflect_direction.flatten(),all_directions,all_weights, X_frame)
+    reflect_direction = map_util.get_reflected_vector_vectorized(normal_direction,view_direction)
+
+    print("valid above hemisphere sample count:{} over {}".format(len(all_directions),n_sample_per_frame))
+
+    visualization.plot_nvl_vector(normal_direction.flatten(),view_direction.flatten(),
+                                  reflect_direction.flatten(),all_directions,all_weights, X_frame)
 
 
 if __name__ == '__main__':
@@ -862,12 +1021,36 @@ if __name__ == '__main__':
 
     import specular
     info = specular.cubemap_level_params(18)
-    visualize_view_dependent_filter_sample_directions(constant=False,adjust_level=True,ggx_alpha=info[3].roughness,n_sample_per_frame=96,level_to_test=3
-                                      ,n_multi_loc=400,optimize_str="bfgs",random_shuffle=True,allow_neg_weight=True,
-                                      ggx_ref_jac_weight=True,view_option_str="relative_frame_full",view_reflection_parameterization=False, clip_ndf = False)
-    compare_view_dependent_ggx_kernel(constant=False,adjust_level=True,ggx_alpha=info[3].roughness,n_sample_per_frame=96,level_to_test=1
-                                      ,n_multi_loc=300,optimize_str="bfgs",random_shuffle=True,allow_neg_weight=True,
-                                      ggx_ref_jac_weight=True,view_option_str="relative_frame_full",view_reflection_parameterization=False, clip_ndf = False,synthetic=True)
+
+    test_option = 1
+    if test_option == 0:
+        visualize_view_dependent_filter_sample_directions(constant=False, adjust_level=True,
+                                                          ggx_alpha=info[3].roughness, n_sample_per_frame=96,
+                                                          level_to_test=3
+                                                          , n_multi_loc=300, optimize_str="bfgs", random_shuffle=True,
+                                                          allow_neg_weight=True,
+                                                          ggx_ref_jac_weight='light',
+                                                          view_option_str="relative_frame_full_interaction",
+                                                          view_reflection_parameterization=False, clip_ndf=False)
+    elif test_option == 1:
+        compare_view_dependent_ggx_kernel(constant=False, adjust_level=True, ggx_alpha=info[3].roughness,
+                                          n_sample_per_frame=96, level_to_test=3
+                                          , n_multi_loc=300, optimize_str="bfgs", random_shuffle=True,
+                                          allow_neg_weight=True,
+                                          ggx_ref_jac_weight='light', view_option_str="relative_frame_full_interaction",
+                                          view_reflection_parameterization=False, clip_ndf=False, synthetic=True)
+    elif test_option == 2:
+        compare_view_independent_ggx_kernel(constant=False, adjust_level=True, ggx_alpha=info[3].roughness,
+                                            n_sample_per_frame=32, level_to_test=3
+                                            , n_multi_loc=300, optimize_str="bfgs", random_shuffle=True,
+                                            allow_neg_weight=True,
+                                            ggx_ref_jac_weight='light', view_option_str="None",
+                                            view_reflection_parameterization=False, clip_ndf=False, synthetic=False)
+
+
+
+
+
     #
     #
     # #test_ref_coef(False,32)

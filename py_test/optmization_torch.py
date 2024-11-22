@@ -107,11 +107,9 @@ def process_cmd():
     )
     parser.add_argument(
         '-j', '--jacref',
-        type=str2bool,
-        nargs='?',
-        const=True,
-        default=False,
-        help='Whether to apply jacobian to reference'
+        type=str,
+        default='None',
+        help='apply what jacobian to reference'
     )
 
     parser.add_argument('-lr', '--learning-rate', type=float, default=1e-3,
@@ -406,7 +404,7 @@ def stack_parameter(view_option_str, view_theta,view_theta2,theta_phi_normal_ten
 
 def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sample_per_frame, n_sample_per_level, ggx_ref_list, all_params_list ,
                                                                            coef_table=None, adjust_level = False, allow_neg_weight = False,
-                                                                           view_option_str = 'None', use_reflection_parameterization = False ,device = torch.device('cpu')):
+                                                                           view_option_str = 'None', use_reflection_parameterization = False ,device = torch.device('cpu'), normal_directions = None):
     #First use coefficient to compute...
 
     #coefficient [5,3,n_sample_per_frame * 3]
@@ -519,7 +517,13 @@ def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sam
     sample_idx_all = torch.repeat_interleave(sample_idx_all, n_sample_per_frame, dim = 0)
     sample_idx_all = sample_idx_all[valid_idx]
 
+    #from [n_sample_per_level] to n_sampler_per_level * n_sample_per_frame * frame_count]
+    all_normal_location = normal_directions.repeat(frame_count,1)
+    all_normal_location = torch.repeat_interleave(all_normal_location, n_sample_per_frame, dim = 0)
+    all_normal_location = all_normal_location[valid_idx]
+    direction = direction / torch.linalg.norm(direction,dim=-1,keepdim=True)
 
+    all_NdotL = torch.sum(all_normal_location * direction, dim = -1)
 
 
     # xyz_list -> X -> [3,n_sample_per_level,3] Y->[3,n_sample_per_level,3] Z->[3,n_sample_per_level,3]
@@ -528,7 +532,11 @@ def multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sam
                                                                 sample_idx_all, n_level=7,
                                                                 n_sample_per_level=n_sample_per_level)
 
-    return result
+    #Compute below horizon directions, simply return the cosine
+
+
+
+    return result, all_NdotL
 
 
 
@@ -555,7 +563,7 @@ def multiple_texel_full_optimization_vectorized_vec_prepare(n_sample_per_frame, 
 
     #theta2 -> [3,n_sample_per_level] phi2 ->[3,n_sample_per_level]
 
-    final_result = torch.empty((5,0))
+    final_result = torch.empty((5,0),device=device)
 
 
     for frame_idx in range(3):
@@ -638,7 +646,7 @@ def multiple_texel_full_optimization_vectorized_vec_prepare(n_sample_per_frame, 
 
 
     #create sample_idx pattern
-    sample_idx_all = torch.arange(0, n_sample_per_level, dtype=torch.int)
+    sample_idx_all = torch.arange(0, n_sample_per_level, dtype=torch.int, device=device)
     sample_idx_all = sample_idx_all.repeat(3)
     sample_idx_all = torch.repeat_interleave(sample_idx_all, n_sample_per_frame, dim = 0)
     sample_idx_all = sample_idx_all[valid_idx]
@@ -1059,7 +1067,7 @@ def precompute_opt_info(texel_directions, n_sample_per_level):
 
 def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False,
                                 vectorize = True, optimizer_type = "adam", random_shuffle = False, allow_neg_weight = False,
-                                ggx_ref_jac_weight = False, learning_rate = 1e-4, view_option_str = "None"
+                                ggx_ref_jac_weight = 'None', learning_rate = 1e-4, view_option_str = "None"
                                 ,view_reflection_parameterization = False, view_ndf_clipping = False):
     """
     To speed up, a lot of things can be precomputed, including the relative XYZ,the frame weight_g
@@ -1132,7 +1140,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
     if os.path.exists("./model/" + model_name):
         logger.info("Read model from dict")
-        model.load_state_dict(torch.load("./model/" + model_name))
+        model.load_state_dict(torch.load("./model/" + model_name,map_location=device))
 
 
     model.to(device)
@@ -1235,29 +1243,35 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                                                                                      all_precomputed_info, params,
                                                                                      constant, adjust_level, allow_neg_weight, device)
 
-
+                regularization_term = 0
                 # tmp_pushed_back_result = multiple_texel_full_optimization_vectorized(n_sample_per_frame,
                 #                                                                      n_sample_per_level, ref_list,
                 #                                                                      weight_per_frame, xyz_per_frame,
                 #                                                                      theta_phi_per_frame, params,
                 #                                                                      constant, adjust_level, allow_neg_weight, device)
             else:
-                tmp_pushed_back_result = multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sample_per_frame,n_sample_per_level, ref_list,
+                tmp_pushed_back_result, all_NdotL = multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(n_sample_per_frame,n_sample_per_level, ref_list,
                                                                                               all_precomputed_info,params,adjust_level,allow_neg_weight,view_option_str,
-                                                                                              view_reflection_parameterization,device)
+                                                                                              view_reflection_parameterization,device,all_locations)
 
                 # tmp_pushed_back_result = multiple_texel_full_optimization_view_dependent_vectorized(n_sample_per_frame,n_sample_per_level,
                 #                                                                                     ref_list,weight_per_frame,xyz_per_frame,
                 #                                                                                     theta_phi_per_frame,view_theta_list,params,constant,
                 #                                                                                     adjust_level, allow_neg_weight, view_option_str ,device)
-                if view_ndf_clipping:
-                    tmp_pushed_back_result = torch_util.clip_below_horizon_part_view_dependent(all_locations,tmp_pushed_back_result,tex_directions_res)
-            # normalize pushed_back result
+
+                # We should not clip our result, we will want the full result to be as close as the clipped NDF/VNDF
+                # if view_ndf_clipping:
+                #     tmp_pushed_back_result = torch_util.clip_below_horizon_part_view_dependent(all_locations,tmp_pushed_back_result,tex_directions_res)
+            # normalize pushed_back result, if NdotL is less than zero, which means we have sampled some invalid location, we add penalty
+                regularization_term = torch.nn.functional.relu(-all_NdotL)
+                reg_lambda = 1 / n_sample_per_frame / n_sample_per_level * 0.7
+                regularization_term = torch.sum(regularization_term) * reg_lambda
+
             tmp_pushed_back_sum = torch.sum(tmp_pushed_back_result, dim=[1, 2, 3, 4], keepdim=True)
             tmp_pushed_back_result /= (tmp_pushed_back_sum + 1e-7)
             diff = torch.abs(ref_list - tmp_pushed_back_result)
             diff = torch.sum(diff, dim=[1, 2, 3, 4])
-            mean_error = torch.mean(diff)
+            mean_error = torch.mean(diff) + regularization_term
         else:
             # if view_dependent:
             #     raise NotImplementedError

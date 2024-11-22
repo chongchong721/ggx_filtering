@@ -212,3 +212,5 @@ Parameterization if there is no frame?
 -> using both normal and reflected direction -> lower loss?
 
 change default setting from clipping to not clipping view ndf
+
+To regularize the direction to not go below the hemisphere, some regularization terms should be added

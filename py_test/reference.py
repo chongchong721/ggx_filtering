@@ -15,7 +15,7 @@ import interpolation
 
 import torch
 import torch_util
-from torch_util import texel_dir_128_torch
+from torch_util import texel_dir_128_torch,texel_dir_128_torch_map
 
 
 #Compute the reference \int l(h)d(h)dh by numerically integrate every texel we have
@@ -51,7 +51,7 @@ def test(res):
 
     print("Done")
 
-@numba.jit(nopython=True)
+#@numba.jit(nopython=True)
 def ndf_isotropic(a,cos_theta):
     a_pow_of2 = a ** 2
     ndf = a_pow_of2 / (np.pi * np.pow(cos_theta * cos_theta * (a_pow_of2 - 1) + 1, 2))
@@ -68,15 +68,57 @@ def loop_compute(normal_direction,normalized_xyz_input,j_weighted_input,alpha,de
 
 
 def loop_compute_view_dependent(normal_direction,normalized_xyz_input,j_weighted_input,alpha,delta_s, view_direction):
+    """
+
+    :param normal_direction:[3,]
+    :param normalized_xyz_input: [6,n,n,3]
+    :param j_weighted_input:
+    :param alpha:
+    :param delta_s:
+    :param view_direction: [3,]
+    :return:
+    """
+    half_vector = map_util.get_half_vector_vectorized(normalized_xyz_input,view_direction)
+    NdotH = np.dot(half_vector, normal_direction)
+    ndf = ndf_isotropic(alpha,NdotH)
+
+    #set the part where lighting direction(normalized_xyz_input) is below the hemisphere to be zero
+    NdotL = np.dot(normalized_xyz_input, normal_direction)
+    ndf = np.where(NdotL > 0.0, ndf, 0.0)
+
+    VdotH = np.dot(half_vector, view_direction)
+
+    multiplier = ndf * NdotH / (4 * VdotH)
+
+    integral_sum = np.stack((multiplier, multiplier, multiplier), axis=-1) * j_weighted_input
+    integral = np.sum(integral_sum, axis = 0) * delta_s
+    return integral
+
+
+
+
+def loop_compute_is(normal_direction, j_weighted_input ):
     pass
 
 
 
+
 def loop_compute_nojit(normal_direction,normalized_xyz_input,j_weighted_input,alpha,delta_s):
-    cosine = np.dot(normalized_xyz_input, normal_direction)
-    ndf = ndf_isotropic(alpha,cosine)
-    integral_sum = np.stack((ndf, ndf, ndf), axis=-1) * j_weighted_input
-    integral = np.sum(integral_sum, axis=0) * delta_s
+    half_vector = map_util.get_half_vector_vectorized(normalized_xyz_input, normal_direction)
+    NdotH = np.dot(half_vector, normal_direction)
+    ndf = ndf_isotropic(alpha,NdotH)
+
+    j_h = 1 / (4 * NdotH)
+
+    #how to importance sample GGX NDF? from Walter's GGX paper, you importance sample D(h)<n,h>,
+    #And according to Epic paper, another <n,l> is added, for no math reason, just look better empirically
+    multiplier = ndf * NdotH * j_h
+    NdotL = np.dot(normalized_xyz_input, normal_direction)
+    multiplier = np.where(NdotL > 0.0, multiplier, 0.0)
+    #NdotL = np.where(NdotL > 0.0, NdotL, 0.0)
+    #weighted_multiplier = NdotL * multiplier
+    integral_sum = np.stack((multiplier, multiplier, multiplier), axis=-1) * j_weighted_input
+    integral = np.sum(integral_sum, axis=0)  * delta_s
     return integral
 
 
@@ -122,6 +164,8 @@ def compute_reference_view_dependent(input_map,cubemap_res,ref_res,GGX_alpha,vie
     normalized_xyz_input_tmp = np.reshape(normalized_xyz_input, (-1, 3))
     j_weighted_input_tmp = np.reshape(j_weighted_input, (-1, 3))
 
+    view_direction = view_direction.flatten()
+
     with tqdm(total=total_it, desc="texel progress") as pbar:
         # loop through every texel
         for face_idx in range(6):
@@ -129,20 +173,22 @@ def compute_reference_view_dependent(input_map,cubemap_res,ref_res,GGX_alpha,vie
                 for j in range(ref_res):
                     # l = v = h
                     normal_direction = normalized_xyz_output[face_idx, i, j]
-                    # Now, compute ndf for each direction, using input
+                    if np.dot(normal_direction, view_direction.flatten()) < 0:
+                        int_result[face_idx, i, j] = 0
+                    else:
+                        # Now, compute ndf for each direction, using input
 
-                    # The computation of cosine requires all normalized vectors
-                    # integral = loop_compute(normal_direction,normalized_xyz_input_tmp,j_weighted_input_tmp,GGX_alpha,delta_s)
-                    integral = loop_compute_nojit(normal_direction, normalized_xyz_input_tmp, j_weighted_input_tmp,
-                                                  GGX_alpha,
-                                                  delta_s)
-                    # cosine = np.dot(normalized_xyz_input,normal_direction)
-                    # ndf = GGX.ndf_isotropic(cosine)
-                    #
-                    # integral_sum = np.stack((ndf,ndf,ndf),axis=-1) * j_weighted_input
-                    #
-                    # integral = np.sum(integral_sum, axis=(0,1,2)) * delta_s
-                    int_result[face_idx, i, j] = integral
+                        # The computation of cosine requires all normalized vectors
+                        # integral = loop_compute(normal_direction,normalized_xyz_input_tmp,j_weighted_input_tmp,GGX_alpha,delta_s)
+                        integral = loop_compute_view_dependent(normal_direction, normalized_xyz_input_tmp, j_weighted_input_tmp,GGX_alpha,
+                                                               delta_s, view_direction)
+                        # cosine = np.dot(normalized_xyz_input,normal_direction)
+                        # ndf = GGX.ndf_isotropic(cosine)
+                        #
+                        # integral_sum = np.stack((ndf,ndf,ndf),axis=-1) * j_weighted_input
+                        #
+                        # integral = np.sum(integral_sum, axis=(0,1,2)) * delta_s
+                        int_result[face_idx, i, j] = integral
                     pbar.update(1)
 
     # file_name = "res" + str(ref_res) + "alpha" + str(GGX_alpha) + ".npy"
@@ -209,6 +255,60 @@ def compute_reference(input_map, cubemap_res, ref_res, GGX_alpha, save_file_name
         np.save("./refs/" + save_file_name,int_result)
 
     return int_result
+
+
+
+def compute_is_filtered_result(input_map,cubemap_res,ref_res,GGX_alpha,save_file_name=None):
+    #Now loop through every texel
+    int_result = np.zeros((6,ref_res,ref_res,input_map.shape[-1]))
+
+    # generate xyz for each face
+    xyz_output = map_util.texel_directions(ref_res)
+    xyz_input = map_util.texel_directions(cubemap_res)
+    #integral area
+    delta_s = 4.0 / cubemap_res / cubemap_res
+
+    jacobian = map_util.jacobian_vertorized(xyz_input)
+
+    j_weighted_input = np.stack((jacobian,jacobian,jacobian),axis=-1) * input_map
+
+    normalized_xyz_input = mat_util.normalized(xyz_input)
+    normalized_xyz_output = mat_util.normalized(xyz_output)
+
+    total_it = 6 * ref_res * ref_res
+
+    normalized_xyz_input_tmp = np.reshape(normalized_xyz_input,(-1,3))
+    j_weighted_input_tmp = np.reshape(j_weighted_input,(-1,3))
+
+    with tqdm(total=total_it, desc="texel progress") as pbar:
+        #loop through every texel
+        for face_idx in range(6):
+            for i in range(ref_res):
+                for j in range(ref_res):
+                    # l = v = h
+                    normal_direction = normalized_xyz_output[face_idx,i,j]
+                    # Now, compute ndf for each direction, using input
+
+                    # The computation of cosine requires all normalized vectors
+                    #integral = loop_compute(normal_direction,normalized_xyz_input_tmp,j_weighted_input_tmp,GGX_alpha,delta_s)
+                    integral = loop_compute_nojit(normal_direction, normalized_xyz_input_tmp, j_weighted_input_tmp, GGX_alpha,
+                                            delta_s)
+                    # cosine = np.dot(normalized_xyz_input,normal_direction)
+                    # ndf = GGX.ndf_isotropic(cosine)
+                    #
+                    # integral_sum = np.stack((ndf,ndf,ndf),axis=-1) * j_weighted_input
+                    #
+                    # integral = np.sum(integral_sum, axis=(0,1,2)) * delta_s
+                    int_result[face_idx,i,j] = integral
+                    pbar.update(1)
+
+    #file_name = "res" + str(ref_res) + "alpha" + str(GGX_alpha) + ".npy"
+    if save_file_name is not None:
+        np.save("./refs/" + save_file_name,int_result)
+
+    return int_result
+
+
 
 
 def ndf_isotropic_torch_vectorized(alpha, cos_theta):
@@ -306,9 +406,11 @@ def vndf_isotropic_torch_vectorized(view_directions, normal_directions, directio
     half_vectors = half_vectors / torch.linalg.norm(half_vectors, dim = -1, keepdim = True)
 
     g1 = g1_isotropic_torch_vectorized(ggx_alpha,view_directions,normal_directions,half_vectors)
-    ndf = compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha,normal_directions,directions,directions_map,view_directions,False, clip_ndf=clip_ndf)
-    cos = torch.abs(torch.sum(view_directions.view(view_directions.shape[0], 1, 1, 1, 3) * half_vectors,dim=-1))
-    result = g1 * ndf * cos / torch.sum(view_directions * normal_directions,dim=-1).view(view_directions.shape[0], 1, 1, 1)
+    #ndf = compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha,normal_directions,directions,directions_map,view_directions,'none', clip_ndf=clip_ndf)
+    NdotH = torch.einsum('bl,bijkl->bijk', normal_directions, half_vectors)
+    ndf = ndf_isotropic_torch_vectorized(ggx_alpha,NdotH)
+    VdotH = torch.abs(torch.sum(view_directions.view(view_directions.shape[0], 1, 1, 1, 3) * half_vectors,dim=-1))
+    result = g1 * ndf * VdotH / torch.sum(view_directions * normal_directions,dim=-1).view(view_directions.shape[0], 1, 1, 1)
 
     # # If m below horizon, clip? This might already be covered by heaviside function
     # zero_condition = torch.sum(normal_directions.view(view_directions.shape[0], 1, 1, 1, 3) * half_vectors, dim = -1) < 0.0
@@ -350,7 +452,7 @@ def vndf_isotropic_torch_vectorized(view_directions, normal_directions, directio
 
 
 
-def compute_ggx_vndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_directions, directions, directions_map, view_direction, apply_jacobian = False, clip_ndf = False):
+def compute_ggx_vndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_directions, directions, directions_map, view_direction, apply_jacobian = 'none', clip_ndf = False):
     """
     Compute VNDF(visible NDF)
     :param ggx_alpha:
@@ -361,20 +463,27 @@ def compute_ggx_vndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_direc
     :param apply_jacobian:
     :return:
     """
+    half_vec = torch_util.get_all_half_vector_torch_vectorized(view_direction, directions)
     vndf = vndf_isotropic_torch_vectorized(view_direction,normal_directions,directions,directions_map,ggx_alpha)
-    if apply_jacobian:
-        #which directions to use, half_vec or map direction? This will make huge difference when viewing angle close to grazing angle?
-        j = torch_util.torch_jacobian_vertorized(directions_map)
+    if apply_jacobian.lower() != 'none':
+        # which directions to use, half_vec or map direction? This will make huge difference when viewing angle close to grazing angle?
+        if apply_jacobian.lower() == 'half':
+            half_vec_map = half_vec / torch.max(torch.abs(half_vec),dim=-1,keepdim=True).values
+            j = torch_util.torch_jacobian_vertorized(half_vec_map)
+        elif apply_jacobian.lower() == 'light':
+            j = torch_util.torch_jacobian_vertorized(directions_map)
+        else:
+            raise NotImplementedError
         vndf = vndf * j
 
+    vndf = vndf.reshape(vndf.shape + (1,))
     if clip_ndf:
         vndf = torch_util.clip_below_horizon_part_view_dependent(normal_directions, vndf, texel_dir_128_torch)
-
     return vndf
 
 
 
-def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_directions, directions, directions_map, view_direction, apply_jacobian = False, clip_ndf = False):
+def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_directions, directions, directions_map, view_direction, apply_jacobian = 'None', clip_ndf = False):
     """
     :param ggx_alpha:
     :param normal_directions: in shape of [N,3]
@@ -398,9 +507,15 @@ def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_direct
     cosine = torch.einsum('bl,bijkl->bijk', normal_directions, half_vec)
     ndf = ndf_isotropic_torch_vectorized(ggx_alpha,cosine)
 
-    if apply_jacobian:
-        #which directions to use, half_vec or map direction? This will make huge difference when viewing angle close to grazing angle?
-        j = torch_util.torch_jacobian_vertorized(directions_map)
+    if apply_jacobian.lower() != 'none':
+        # which directions to use, half_vec or map direction? This will make huge difference when viewing angle close to grazing angle?
+        if apply_jacobian.lower() == 'half':
+            half_vec_map = half_vec / torch.max(torch.abs(half_vec),dim=-1,keepdim=True).values
+            j = torch_util.torch_jacobian_vertorized(half_vec_map)
+        elif apply_jacobian.lower() == 'light':
+            j = torch_util.torch_jacobian_vertorized(directions_map)
+        else:
+            raise NotImplementedError
         ndf = ndf * j
 
     ndf = ndf.reshape(ndf.shape + (1,))
@@ -413,7 +528,7 @@ def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_direct
 
 
 
-def compute_ggx_ndf_reference_half_vector_torch_vectorized(res, ggx_alpha, normal_directions, directions, directions_map, apply_jacobian=False):
+def compute_ggx_ndf_reference_half_vector_torch_vectorized(res, ggx_alpha, normal_directions, directions, directions_map, apply_jacobian='None'):
     """
     The half vector is computed as (normal + directions). Not
     :param res:
@@ -432,8 +547,15 @@ def compute_ggx_ndf_reference_half_vector_torch_vectorized(res, ggx_alpha, norma
     cosine = torch.einsum('bl,bijkl->bijk', normal_directions, half_vec)
     ndf = ndf_isotropic_torch_vectorized(ggx_alpha,cosine)
 
-    if apply_jacobian:
-        j = torch_util.torch_jacobian_vertorized(directions_map)
+    if apply_jacobian.lower != 'none':
+        # which directions to use, half_vec or map direction? This will make huge difference when viewing angle close to grazing angle?
+        if apply_jacobian.lower() == 'half':
+            half_vec_map = half_vec / torch.max(torch.abs(half_vec), dim=-1, keepdim=True).values
+            j = torch_util.torch_jacobian_vertorized(half_vec_map)
+        elif apply_jacobian.lower() == 'light':
+            j = torch_util.torch_jacobian_vertorized(directions_map)
+        else:
+            raise NotImplementedError
         ndf = ndf * j
 
     ndf = ndf.reshape(ndf.shape + (1,))
@@ -548,64 +670,44 @@ if __name__ == '__main__':
     direction = map_util.uv_to_xyz((u,v),4)
     #synthetic_onepoint_input(direction,128)
 
-
-
-
-
     info = specular.cubemap_level_params(18)
 
-    a = np.array([[0.0,0.0,1.0]]).T
-    normal_vector = np.array([[1.0, 0.2, 0.1]])
-    normal_vector = normal_vector / np.linalg.norm(normal_vector)
-    normal_vector = normal_vector.T
-    view_vector_test = mat_util.reflect(-a, normal_vector)
-
-    # test = compute_ggx_vndf_ref_view_dependent_torch_vectorized(0.1, torch.from_numpy(b).reshape((1,3)), torch_util.texel_dir_128_torch,torch_util.texel_dir_128_torch_map,
-    #                                                            torch.from_numpy(c).reshape((1,3)),True)
-
-    X,Y,Z = torch_util.torch_gen_anisotropic_frame_xyz(torch.from_numpy(normal_vector).reshape((1, 3)), torch.from_numpy(view_vector_test).reshape((1, 3)))
-
-    X_proj = torch_util.project_vector_to_surface(vector=X,surface_normal=torch.Tensor([[0.0,0.0,1.0]]))
-
-    u,v,face_idx = torch_util.torch_xyz_to_uv_vectorized(torch.from_numpy(a).reshape((1,3)))
-
-    if X_proj[0][0] != 0.0:
-        k = X_proj[0][1] / X_proj[0][0]
-        c = v - k * u
-    else:
-        k = torch.inf
-        raise NotImplementedError
-
-    u_at_v_at_0 = (v-c) / k
-    v_at_u_at_0 = c
-
-    import matplotlib.pyplot as plt
-    x = np.linspace(0, 1, 100)
-    y = k * x + c
-    plt.figure(figsize=(6, 6))  # Optional: set the figure size
-
-    plt.grid(True)
-    plt.legend()
-
-    # Set equal aspect ratio
-    plt.axis('equal')  # Ensures that the scale is the same on both axes
-    plt.plot(x, y, label=f'y = {k}x + {c}')  # Plot the line
-    plt.show()
+    g = torch.Generator()
+    g.seed()
+    for i in range(100000):
+        view_direction, view_theta ,normal_direction_cube, normal_direction = torch_util.sample_view_dependent_location(1,g,True)
+        if view_theta > np.pi / 2 - 0.02:
+            break
+    ndf_result = compute_ggx_ndf_ref_view_dependent_torch_vectorized(0.1,normal_direction,texel_dir_128_torch.unsqueeze(0),texel_dir_128_torch_map.unsqueeze(0),view_direction,'light')
+    ndf_result = ndf_result.repeat([1,1,1,1,3])
+    vndf_result = compute_ggx_vndf_ref_view_dependent_torch_vectorized(0.1,normal_direction,texel_dir_128_torch.unsqueeze(0),texel_dir_128_torch_map.unsqueeze(0),view_direction,'light')
+    vndf_result = vndf_result.repeat([1,1,1,1,3])
 
 
-    test = compute_ggx_ndf_ref_view_dependent_torch_vectorized(0.1, torch.from_numpy(normal_vector).reshape((1, 3)), torch_util.texel_dir_128_torch, torch_util.texel_dir_128_torch_map,
-                                                               torch.from_numpy(view_vector_test).reshape((1, 3)), True)
+    image_read.gen_cubemap_preview_image(vndf_result[0],128,filename='vndf_pdf_grazing.exr')
+    image_read.gen_cubemap_preview_image(ndf_result[0],128,filename='ndf_pdf_grazing.exr')
+
+
+    ndf_result = compute_ggx_ndf_ref_view_dependent_torch_vectorized(0.1,normal_direction,texel_dir_128_torch.unsqueeze(0),texel_dir_128_torch_map.unsqueeze(0),view_direction,'light',clip_ndf=True)
+    ndf_result = ndf_result.repeat([1,1,1,1,3])
+    vndf_result = compute_ggx_vndf_ref_view_dependent_torch_vectorized(0.1,normal_direction,texel_dir_128_torch.unsqueeze(0),texel_dir_128_torch_map.unsqueeze(0),view_direction,'light',clip_ndf=True)
+    vndf_result = vndf_result.repeat([1,1,1,1,3])
+    image_read.gen_cubemap_preview_image(vndf_result[0],128,filename='vndf_pdf_grazing_clip.exr')
+    image_read.gen_cubemap_preview_image(ndf_result[0],128,filename='ndf_pdf_grazing_clip.exr')
+
+    view_direction = view_direction.cpu().detach().numpy().reshape((1,3))
+    normal_direction = normal_direction.cpu().detach().numpy().reshape((1,3))
 
 
 
 
-    test = test[0]
+    file_name = "08-21_Swiss_A.hdr"
+    mipmap_l0 = image_read.envmap_to_cubemap('exr_files/' + file_name, 128)
+    result = compute_reference_view_dependent(mipmap_l0,128,16,info[3].roughness,view_direction)
+    save_name = "./refs/view_filtered/" + "{:.4f}_{:.4f}_{:.4f}".format(view_direction[0,0],view_direction[0,1],view_direction[0,2]) + ".exr"
+    image_read.gen_cubemap_preview_image(result,16,filename=save_name)
 
-    test = torch.stack((test,test,test),dim = -1)
 
-    test = test.detach().numpy()
-
-    image_read.gen_cubemap_preview_image(test,128,filename="./test_clip.exr")
 
 
     generate_custom_reference("08-21_Swiss_A.hdr",128,info[4].roughness,8)

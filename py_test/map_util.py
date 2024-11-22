@@ -33,6 +33,22 @@ def get_reflected_vector_vectorized(n: np.ndarray, wi: np.ndarray):
     return r
 
 
+def get_half_vector_vectorized(l,v):
+    """
+    :param l: [6,128,128,3]
+    :param v: [3,]
+    :return:
+    """
+    num_leading_dims = l.ndim - 1  # Subtract 1 because the last dimension is 3
+    # Create the new shape: (1, 1, ..., 3)
+    new_shape = (1,) * num_leading_dims + (3,)
+    v = v.reshape(new_shape)
+
+    wh = v + l
+    wh = wh / np.linalg.norm(wh, axis=-1, keepdims=True)
+    return wh
+
+
 
 def rotate_90degree_awayfrom_n(vectors,normals):
     """
@@ -686,7 +702,7 @@ def gen_theta_phi_no_frame(facex_xyz):
 
 
 def log_filename(ggx_alpha, n_sample_per_frame ,n_sample_per_level,constant,adjust_level, optim_method:str ,
-                 random_shuffle = False, allow_neg_weight = False, ggx_ref_jac_weight = False,view_dependent = False,
+                 random_shuffle = False, allow_neg_weight = False, ggx_ref_jac_weight = 'None',view_dependent = False,
                  view_option_str = "None",reflection_parameterization = False,view_ndf_clipping = False,post_fix_for_dirs = None):
     log_name = 'optim_info_multi_ggx_' + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
 
@@ -714,8 +730,8 @@ def log_filename(ggx_alpha, n_sample_per_frame ,n_sample_per_level,constant,adju
     if allow_neg_weight:
         log_name = log_name + "_negweight"
 
-    if ggx_ref_jac_weight:
-        log_name = log_name + "_jacref"
+    if ggx_ref_jac_weight.lower() != 'none':
+        log_name = log_name + "_jacref" + ggx_ref_jac_weight.lower()
 
     if post_fix_for_dirs is not None:
         log_name = log_name + "_" + post_fix_for_dirs
@@ -725,7 +741,7 @@ def log_filename(ggx_alpha, n_sample_per_frame ,n_sample_per_level,constant,adju
     return log_name
 
 def dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optim_method:str ,
-                 allow_neg_weight = False, ggx_ref_jac_weight = False,view_dependent = False,view_option_str = "None",
+                 allow_neg_weight = False, ggx_ref_jac_weight = 'None',view_dependent = False,view_option_str = "None",
                  reflection_parameterization = False,view_ndf_clipping = False,post_fix_for_dirs = None):
     if constant:
         dir_name = "constant"+ str(n_sample_per_frame)  + "_ggx_multi_" + "{:.3f}".format(ggx_alpha) + "_" + str(n_sample_per_level)
@@ -748,8 +764,8 @@ def dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, ad
     if allow_neg_weight:
         dir_name = dir_name + "_negweight"
 
-    if ggx_ref_jac_weight:
-        dir_name = dir_name + "_jacref"
+    if ggx_ref_jac_weight.lower() != 'none':
+        dir_name = dir_name + "_jacref" + ggx_ref_jac_weight.lower()
 
     dir_name = dir_name + "_dirs"
     if post_fix_for_dirs is not None:
@@ -759,7 +775,7 @@ def dir_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, ad
     return dir_name
 
 def model_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, adjust_level, optim_method:str ,
-                   random_shuffle = False, allow_neg_weight = False, ggx_ref_jac_weight = False,
+                   random_shuffle = False, allow_neg_weight = False, ggx_ref_jac_weight = 'None',
                    view_dependent = False,view_option_str = "None",reflection_parameterization = False,view_ndf_clipping = False,
                    post_fix_for_dirs = None):
     if constant:
@@ -786,8 +802,8 @@ def model_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, 
     if allow_neg_weight:
         model_name = model_name + "_negweight"
 
-    if ggx_ref_jac_weight:
-        model_name = model_name + "_jacref"
+    if ggx_ref_jac_weight.lower() != 'none':
+        model_name = model_name + "_jacref" + ggx_ref_jac_weight.lower()
 
     if post_fix_for_dirs is not None:
         model_name = model_name + "_" + post_fix_for_dirs

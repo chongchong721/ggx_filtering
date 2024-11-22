@@ -1302,7 +1302,7 @@ def sample_uniform_hemisphere(uv):
 
 
 
-def sample_directions_over_hemispheres(normals, uv, no_parallel = False):
+def sample_directions_over_hemispheres(normals, uv, no_parallel = False, cos_theta_max = 1.0):
     N = normals.shape[0]
 
     # Sample directions on the canonical hemisphere
@@ -1317,6 +1317,8 @@ def sample_directions_over_hemispheres(normals, uv, no_parallel = False):
         cos_theta = v * cos_threshold
     else:
         cos_theta = v
+    cos_theta = cos_theta * cos_theta_max
+
     sin_theta = torch.sqrt(1 - cos_theta * cos_theta)
     x = torch.cos(phi) * sin_theta
     y = torch.sin(phi) * sin_theta
@@ -1357,12 +1359,14 @@ def sample_directions_over_hemispheres(normals, uv, no_parallel = False):
 
 
 
-def sample_view_dependent_location(n_sample_per_level, g = None, no_parallel = False):
+def sample_view_dependent_location(n_sample_per_level, g = None, no_parallel = False, cos_theta_max = 1.0):
     """
 
     :param n_sample_per_level:
     :param g:
     :param no_parallel: whether to generate parallel view and normal directions( and near parallel cases)
+    :param cos_theta_max: the max cos_theta we generate, if set to less than 1.0, we generate more samples
+    that the view theta is large
     :return:
     """
     if g is None:
@@ -1380,7 +1384,7 @@ def sample_view_dependent_location(n_sample_per_level, g = None, no_parallel = F
 
     uv = torch.rand((n_sample_per_level,2),generator=g, device = device)
 
-    view_direction, view_theta = sample_directions_over_hemispheres(xyz,uv, no_parallel=no_parallel)
+    view_direction, view_theta = sample_directions_over_hemispheres(xyz,uv, no_parallel=no_parallel, cos_theta_max = cos_theta_max)
 
     return (view_direction, view_theta ,xyz_cube, xyz)
 

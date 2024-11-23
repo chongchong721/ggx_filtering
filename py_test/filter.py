@@ -1008,7 +1008,7 @@ def visualize_view_dependent_filter_sample_directions(constant,adjust_level,ggx_
     import visualization
 
     reflect_direction = map_util.get_reflected_vector_vectorized(normal_direction,view_direction)
-
+    print("Test view_theta:{:.4f}pi".format(view_theta / np.pi))
     print("valid above hemisphere sample count:{} over {}".format(len(all_directions),n_sample_per_frame))
 
     visualization.plot_nvl_vector(normal_direction.flatten(),view_direction.flatten(),
@@ -1031,14 +1031,14 @@ if __name__ == '__main__':
                                                           allow_neg_weight=True,
                                                           ggx_ref_jac_weight='light',
                                                           view_option_str="relative_frame_full_interaction",
-                                                          view_reflection_parameterization=False, clip_ndf=False)
+                                                          view_reflection_parameterization=False, clip_ndf=True)
     elif test_option == 1:
         compare_view_dependent_ggx_kernel(constant=False, adjust_level=True, ggx_alpha=info[3].roughness,
                                           n_sample_per_frame=96, level_to_test=3
                                           , n_multi_loc=300, optimize_str="bfgs", random_shuffle=True,
                                           allow_neg_weight=True,
                                           ggx_ref_jac_weight='light', view_option_str="relative_frame_full_interaction",
-                                          view_reflection_parameterization=False, clip_ndf=False, synthetic=True)
+                                          view_reflection_parameterization=False, clip_ndf=True, synthetic=False)
     elif test_option == 2:
         compare_view_independent_ggx_kernel(constant=False, adjust_level=True, ggx_alpha=info[3].roughness,
                                             n_sample_per_frame=32, level_to_test=3

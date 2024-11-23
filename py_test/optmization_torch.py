@@ -4,7 +4,7 @@ import map_util
 import mat_util
 from datetime import datetime
 
-from reference import compute_ggx_ndf_reference,compute_ggx_ndf_reference_torch_vectorized,compute_ggx_ndf_reference_half_vector_torch_vectorized,compute_ggx_ndf_ref_view_dependent_torch_vectorized
+from reference import compute_ggx_ndf_reference,compute_ggx_ndf_reference_torch_vectorized,compute_ggx_ndf_reference_half_vector_torch_vectorized,compute_ggx_ndf_ref_view_dependent_torch_vectorized,compute_ggx_vndf_ref_view_dependent_torch_vectorized
 
 import scipy
 import torch
@@ -115,6 +115,15 @@ def process_cmd():
     parser.add_argument('-lr', '--learning-rate', type=float, default=1e-3,
                         help='Learning rate for the optimizer (default: 0.01)')
 
+    parser.add_argument(
+        '-vndf', '--use-vndf',
+        type=str2bool,
+        nargs='?',
+        const=True,
+        default=False,
+        help='Whether to use vndf in view dependent reference.'
+    )
+
 
     args = parser.parse_args()
 
@@ -133,11 +142,12 @@ def process_cmd():
     view_option = args.view
     view_reflection_parameterization = args.view_reflection_parameterization
     view_ndf_cliping = args.view_ndf_clipping
+    use_vndf = args.use_vndf
 
     if ggx_alpha_input is not None and ggx_level is not None:
         raise ValueError('ggx_alpha and ggx_level cannot be both specified.')
 
-    return n_sample_per_frame,ndir, ggx_level if ggx_level is not None else ggx_alpha_input, constant, adjust_level, optimizer, random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr, view_option, view_reflection_parameterization, view_ndf_cliping
+    return n_sample_per_frame,ndir, ggx_level if ggx_level is not None else ggx_alpha_input, constant, adjust_level, optimizer, random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr, view_option, view_reflection_parameterization, view_ndf_cliping, use_vndf
 
 
 
@@ -1068,7 +1078,8 @@ def precompute_opt_info(texel_directions, n_sample_per_level):
 def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False,
                                 vectorize = True, optimizer_type = "adam", random_shuffle = False, allow_neg_weight = False,
                                 ggx_ref_jac_weight = 'None', learning_rate = 1e-4, view_option_str = "None"
-                                ,view_reflection_parameterization = False, view_ndf_clipping = False):
+                                ,view_reflection_parameterization = False, view_ndf_clipping = False
+                                ,use_vndf = False):
     """
     To speed up, a lot of things can be precomputed, including the relative XYZ,the frame weight_g
     we don't have to compute this in every iteration
@@ -1088,7 +1099,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                                      ggx_ref_jac_weight=ggx_ref_jac_weight,
                                      view_dependent=view_dependent, view_option_str=view_option_str
                                      ,reflection_parameterization=view_reflection_parameterization,
-                                     view_ndf_clipping=view_ndf_clipping)
+                                     view_ndf_clipping=view_ndf_clipping, use_vndf=use_vndf)
     log_name = "./logs/" + log_name
 
     logging.basicConfig(filename=log_name, filemode='a', level=logging.INFO,
@@ -1101,7 +1112,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                                          optimizer_type, allow_neg_weight=allow_neg_weight,
                                          ggx_ref_jac_weight=ggx_ref_jac_weight, view_dependent=view_dependent,view_option_str=view_option_str
                                          ,reflection_parameterization=view_reflection_parameterization,
-                                         view_ndf_clipping=view_ndf_clipping)
+                                         view_ndf_clipping=view_ndf_clipping, use_vndf=use_vndf)
         if view_dependent:
             view_dirs, view_theta, all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level, torch.manual_seed(rng.integers(low=1,high=425124123)), no_parallel= True)
             torch.save(torch.concatenate(view_dirs,all_locations_cube),dir_name)
@@ -1126,7 +1137,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                                          ggx_ref_jac_weight=ggx_ref_jac_weight,
                                          view_dependent=view_dependent, view_option_str=view_option_str,
                                          reflection_parameterization=view_reflection_parameterization,
-                                         view_ndf_clipping=view_ndf_clipping)
+                                         view_ndf_clipping=view_ndf_clipping,use_vndf=use_vndf)
 
 
     if view_dependent:
@@ -1158,10 +1169,16 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
 
     if view_dependent:
-        ref_list_global = compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, all_locations,
-                                                                              tex_directions_res,
-                                                                              tex_directions_res_map,
-                                                                              view_dirs, ggx_ref_jac_weight)
+        if use_vndf:
+            ref_list_global = compute_ggx_vndf_ref_view_dependent_torch_vectorized(ggx_alpha, all_locations,
+                                                                                  tex_directions_res,
+                                                                                  tex_directions_res_map,
+                                                                                  view_dirs, ggx_ref_jac_weight)
+        else:
+            ref_list_global = compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, all_locations,
+                                                                                  tex_directions_res,
+                                                                                  tex_directions_res_map,
+                                                                                  view_dirs, ggx_ref_jac_weight)
     else:
         ref_list_global = compute_ggx_ndf_reference_half_vector_torch_vectorized(128, ggx_alpha, all_locations, tex_directions_res, tex_directions_res_map, ggx_ref_jac_weight)
 
@@ -1206,7 +1223,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             if not view_dependent:
                 all_locations_cube,all_locations =  torch_util.sample_location(n_sample_per_level,rng)
             else:
-                view_dirs,view_theta,all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level, rng, no_parallel=True)
+                view_dirs,view_theta,all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level, rng, no_parallel=True, cos_theta_max=0.1)
             #new parameter
 
             #new reference
@@ -1214,7 +1231,14 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                 all_precomputed_info = precompute_opt_info(all_locations_cube,n_sample_per_level)
                 ref_list = compute_ggx_ndf_reference_half_vector_torch_vectorized(128, ggx_alpha, all_locations, tex_directions_res, tex_directions_res_map, ggx_ref_jac_weight)
             else:
-                ref_list = compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, all_locations, tex_directions_res, tex_directions_res_map, view_dirs, ggx_ref_jac_weight, view_ndf_clipping)
+                if use_vndf:
+                    ref_list = compute_ggx_vndf_ref_view_dependent_torch_vectorized(ggx_alpha, all_locations,
+                                                                                   tex_directions_res, tex_directions_res_map,
+                                                                                   view_dirs, ggx_ref_jac_weight, view_ndf_clipping)
+                else:
+                    ref_list = compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, all_locations,
+                                                                                   tex_directions_res, tex_directions_res_map,
+                                                                                   view_dirs, ggx_ref_jac_weight, view_ndf_clipping)
                 all_precomputed_info = precompute_opt_info_view_dependent(all_locations_cube,
                             n_sample_per_level, view_dirs, view_theta, view_reflection_parameterization, view_option_str, device=device)
 
@@ -1890,7 +1914,9 @@ def test_vectorized_multiple_opt(ggx_alpha):
 if __name__ == "__main__":
     print("CUDA Availability:",torch.cuda.is_available())
 
-    n_sample_per_frame,n_sample_per_level, ggx_info, flag_constant, flag_adjust_level, optimizer_string, random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr, view_option, view_reflection_parameterization_g , view_ndf_clipping_g=  process_cmd()
+    (n_sample_per_frame,n_sample_per_level, ggx_info, flag_constant, flag_adjust_level, optimizer_string,
+     random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr,
+     view_option, view_reflection_parameterization_g , view_ndf_clipping_g, use_vndf_g)=  process_cmd()
     #
     if isinstance(ggx_info, int):
         import specular
@@ -1906,8 +1932,9 @@ if __name__ == "__main__":
           "Allow negative weight:{},\n"
           "Use Jacobian weighted ggx as reference:{}\n"
           "View dependency Option:{}\n"
-          "Parameterize using reflected direction:{}"
-          "Clipping below horizong ndf:{}".format(ggx_alpha,n_sample_per_level,n_sample_per_frame,flag_adjust_level,flag_constant,optimizer_string,lr,random_shuffle,allow_neg_weight, ggx_ref_jac_weight,view_option,view_reflection_parameterization_g,view_ndf_clipping_g))
+          "Parameterize using reflected direction:{}\n"
+          "Clipping below horizong ndf:{}\n"
+          "Use VNDF as reference:{}".format(ggx_alpha,n_sample_per_level,n_sample_per_frame,flag_adjust_level,flag_constant,optimizer_string,lr,random_shuffle,allow_neg_weight, ggx_ref_jac_weight,view_option,view_reflection_parameterization_g,view_ndf_clipping_g,use_vndf_g))
 
     # #test_vectorized_multiple_opt(ggx_alpha)
     #

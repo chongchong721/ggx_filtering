@@ -504,8 +504,14 @@ def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_direct
     """
     #normal_direction_normalized = normal_directions / torch.linalg.norm(normal_directions, dim=-1, keepdim=True)
     half_vec = torch_util.get_all_half_vector_torch_vectorized(view_direction,directions)
-    cosine = torch.einsum('bl,bijkl->bijk', normal_directions, half_vec)
-    ndf = ndf_isotropic_torch_vectorized(ggx_alpha,cosine)
+    NdotH = torch.einsum('bl,bijkl->bijk', normal_directions, half_vec)
+    ndf = ndf_isotropic_torch_vectorized(ggx_alpha,NdotH)
+
+    VdotH = torch.einsum('bl,bijkl->bijk', view_direction, half_vec)
+    # Apply other stuff
+    j_h2l = (4 * VdotH)
+    j_h2l = torch.where(j_h2l > 1e-6, j_h2l, 1e-6)
+    ndf = ndf * NdotH / j_h2l
 
     if apply_jacobian.lower() != 'none':
         # which directions to use, half_vec or map direction? This will make huge difference when viewing angle close to grazing angle?
@@ -517,6 +523,8 @@ def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_direct
         else:
             raise NotImplementedError
         ndf = ndf * j
+
+
 
     ndf = ndf.reshape(ndf.shape + (1,))
 
@@ -544,8 +552,15 @@ def compute_ggx_ndf_reference_half_vector_torch_vectorized(res, ggx_alpha, norma
     #We use normal directions to compute the have vector only because we are under the assumption n=v  (l + v)
 
     half_vec = torch_util.get_all_half_vector_torch_vectorized(normal_directions,directions)
-    cosine = torch.einsum('bl,bijkl->bijk', normal_directions, half_vec)
-    ndf = ndf_isotropic_torch_vectorized(ggx_alpha,cosine)
+    NdotH = torch.einsum('bl,bijkl->bijk', normal_directions, half_vec)
+    ndf = ndf_isotropic_torch_vectorized(ggx_alpha,NdotH)
+
+    #view = normal
+    VdotH = NdotH
+    # Apply other stuff
+    j_h2l = (4 * VdotH)
+    j_h2l = torch.where(j_h2l > 1e-6, j_h2l, 1e-6)
+    ndf = ndf * NdotH / j_h2l
 
     if apply_jacobian.lower != 'none':
         # which directions to use, half_vec or map direction? This will make huge difference when viewing angle close to grazing angle?

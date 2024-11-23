@@ -257,9 +257,9 @@ int main() {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssbo_sample_info);
         std::vector<SampleInfo> samples(n_dir * n_sample_per_dir);
         for(uint i = 0; i < n_dir * n_sample_per_dir; i++) {
-            samples[i].direction = glm::vec3(1.0,1.0,1.0);
+            samples[i].direction = glm::vec3(1.0,0.0,1.0);
             samples[i].weight = 1.0;
-            samples[i].level = 0.5;
+            samples[i].level = 1.0;
             samples[i].sample_idx = (uint)(i / n_sample_per_dir);
         }
         glBufferData(GL_SHADER_STORAGE_BUFFER,samples.size() * sizeof(SampleInfo),samples.data(),GL_DYNAMIC_COPY);
@@ -310,6 +310,8 @@ int main() {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssbo_dbg);
         float * ptr = (float*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER,0,output_dbg.size() * sizeof(float),GL_MAP_READ_BIT);
 
+
+
         if(ptr) {
             std::vector<float> tmp(ptr,ptr+output_dbg.size());
             std::cout << tmp[0] << std::endl;
@@ -321,18 +323,45 @@ int main() {
             std::cout << tmp[6] << std::endl;
             std::cout << tmp[7] << std::endl;
             std::cout << tmp[8] << std::endl;
+            std::cout << tmp[9] << std::endl;
+            std::cout << tmp[10] << std::endl;
+            std::cout << tmp[11] << std::endl;
+            std::cout << tmp[12] << std::endl;
+            std::cout << tmp[13] << std::endl;
+            std::cout << tmp[14] << std::endl;
+            std::cout << tmp[15] << std::endl;
+            std::cout << tmp[16] << std::endl;
+            std::cout << tmp[17] << std::endl;
         }
 
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssbo_texture);
         ptr = (float*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER,0,all_texture.size() * sizeof(float),GL_MAP_READ_BIT);
 
+        int tmp_offset = 128 * 128 * 6;
+
         if(ptr) {
             std::vector<float> tmp(ptr,ptr+all_texture.size());
-            std::cout << tmp[0] << std::endl;
-            std::cout << tmp[128*128*3 - 1] << std::endl;
-            std::cout << tmp[128*128*4 + 127] << std::endl;
-            std::cout << tmp[128*128*4+128] << std::endl;
+
+            float sum = 0;
+            for(int i = 0; i < 6 * 128 * 128; i++) {
+                if(std::isnan(tmp[i])) {
+                    std::cout << "NaN" << std::endl;
+                }
+                sum += tmp[i];
+            }
+
+
+            std::cout << tmp[tmp_offset+ 64*64*4 + 64*33-1] << std::endl;
+            std::cout << tmp[tmp_offset+ 64*64*4 + 64*32-1] << std::endl;
+            std::cout << tmp[tmp_offset+ 64*64*4 + 64*31-1] << std::endl;
+            std::cout << tmp[tmp_offset+ 64*64*4 + 64*30-1] << std::endl;
+
+            std::cout << tmp[tmp_offset+ 64*31] << std::endl;
+            std::cout << tmp[tmp_offset+ 64*32] << std::endl;
+            std::cout << tmp[tmp_offset+ 64*33] << std::endl;
+
             std::cout << tmp[63*128+63] << std::endl;
             std::cout << tmp[63*128+64] << std::endl;
             std::cout << tmp[64*128+62] << std::endl;
@@ -340,8 +369,88 @@ int main() {
             std::cout << tmp[64*128+64] << std::endl;
         }
 
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssbo_dbg);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,output_dbg.size() * sizeof(float),output_dbg.data(),GL_DYNAMIC_COPY);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER,4,ssbo_dbg);
 
 
+        compute_shader push_back_shader("/home/yuan/school/ggx_filtering/cpp_test/push_back.glsl");
+        push_back_shader.use();
+
+        int level = 1;
+        int res = 2 << ( 6 - level );
+
+        push_back_shader.setInt("current_level",level);
+
+        int x_size = res * res / 64;
+        x_size = x_size == 0 ? 1 : x_size;
+
+        glDispatchCompute(x_size,6,n_dir);
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssbo_dbg);
+        ptr = (float*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER,0,output_dbg.size() * sizeof(float),GL_MAP_READ_BIT);
+
+        if(ptr) {
+            std::vector<float> tmp(ptr,ptr+output_dbg.size());
+
+
+            std::cout << tmp[0] << std::endl;
+            std::cout << tmp[1] << std::endl;
+            std::cout << tmp[2] << std::endl;
+            std::cout << tmp[3] << std::endl;
+            std::cout << tmp[4] << std::endl;
+            std::cout << tmp[5] << std::endl;
+            std::cout << tmp[6] << std::endl;
+            std::cout << tmp[7] << std::endl;
+            std::cout << tmp[8] << std::endl;
+            std::cout << tmp[9] << std::endl;
+        }
+
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssbo_texture);
+        ptr = (float*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER,0,all_texture.size() * sizeof(float),GL_MAP_READ_BIT);
+        auto error_code = glGetError();
+        if(error_code != GL_NO_ERROR) {
+            std::cout << error_code << std::endl;
+        }
+
+        if(ptr) {
+            //compute sum?
+
+
+            std::vector<float> tmp(ptr,ptr+all_texture.size());
+
+            float sum = 0;
+            for(int i = 0; i < 6 * 128 * 128; i++) {
+                if(std::isnan(tmp[i])) {
+                    std::cout << "NaN" << std::endl;
+                }
+                sum += tmp[i];
+            }
+            std::cout << sum << std::endl;
+
+            std::cout << tmp[128*128*4 + 128*65-1] << std::endl;
+            std::cout << tmp[128*128*4 + 128*64-1] << std::endl;
+            std::cout << tmp[128*128*4 + 128*63-1] << std::endl;
+            std::cout << tmp[128*128*4 + 128*62-1] << std::endl;
+
+            std::cout << tmp[128*62] << std::endl;
+            std::cout << tmp[128*63] << std::endl;
+            std::cout << tmp[128*64] << std::endl;
+
+            std::cout << tmp[63*128+63] << std::endl;
+            std::cout << tmp[63*128+64] << std::endl;
+            std::cout << tmp[64*128+62] << std::endl;
+            std::cout << tmp[64*128+63] << std::endl;
+            std::cout << tmp[64*128+64] << std::endl;
+        }
+
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
     }
 
 

@@ -40,7 +40,7 @@ layout(std430, binding = 4) buffer TmpDebugBuffer{
     float dbg_output[];
 };
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 
 //Compute the four bilinear sample location to get the Jacobian
@@ -73,23 +73,6 @@ float jacobian(vec3 dir){
     float sq = dot(dir,dir);
     return 1.0 / pow(sq,1.5);
 }
-
-
-vec4 get_bilinear_jacobian(vec4 uv_location, int face){
-    vec4 j;
-    vec3 xyz_top_left = get_xyz(vec2(uv_location.x,uv_location.w),face);
-    vec3 xyz_top_right = get_xyz(vec2(uv_location.y,uv_location.w),face);
-    vec3 xyz_bot_left = get_xyz(vec2(uv_location.x,uv_location.z),face);
-    vec3 xyz_bot_right = get_xyz(vec2(uv_location.y,uv_location,z),face);
-
-    j.x = jacobian(xyz_top_left);
-    j.y = jacobian(xyz_top_right);
-    j.z = jacobian(xyz_bot_left);
-    j.w = jacobian(xyz_bot_right);
-
-    return j;
-}
-
 
 
 
@@ -135,6 +118,22 @@ vec3 get_xyz(vec2 uv, int face){
 }
 
 
+vec4 get_bilinear_jacobian(vec4 uv_location, int face){
+    vec4 j;
+    vec3 xyz_top_left = get_xyz(vec2(uv_location.x,uv_location.w),face);
+    vec3 xyz_top_right = get_xyz(vec2(uv_location.y,uv_location.w),face);
+    vec3 xyz_bot_left = get_xyz(vec2(uv_location.x,uv_location.z),face);
+    vec3 xyz_bot_right = get_xyz(vec2(uv_location.y,uv_location.z),face);
+
+    j.x = jacobian(xyz_top_left);
+    j.y = jacobian(xyz_top_right);
+    j.z = jacobian(xyz_bot_left);
+    j.w = jacobian(xyz_bot_right);
+
+    return j;
+}
+
+
 
 
 int from_uv_arr_idx_to_texture_idx(ivec2 uv_arr_idx, int face, int level, int res){
@@ -167,6 +166,8 @@ int from_uv_arr_idx_to_edge_idx(int u, int v, int face,int level, int res){
 
 
 vec3 get_uv(vec3 direction){
+    vec3 dir_copy = direction;
+
     direction = normalize(direction);
 
     float x = direction.x;
@@ -225,7 +226,15 @@ vec3 get_uv(vec3 direction){
     u = 0.5 * (u / max_axis + 1.0f);
     v = 0.5 * (v / max_axis + 1.0f);
 
-
+//    if(isnan(u)){
+//        dbg_output[10] += 1;
+//        dbg_output[12] = dir_copy.x;
+//        dbg_output[13] = dir_copy.y;
+//        dbg_output[14] = dir_copy.z;
+//    }
+//    if(isnan(v)){
+//        dbg_output[11] += 1;
+//    }
 
     ret_info.x = u;
     ret_info.y = v;
@@ -342,9 +351,108 @@ vec4 process_bilinear_weight(vec2 sample_uv, vec4 bilinear_sample_location, floa
     w_bot_left = (u_right_location - u) / len * weight * (v_top_location - v) / len;
     w_bot_right = (u - u_left_location) / len * weight * (v_top_location - v) / len;
 
+//    if(isnan(w_top_left)){
+//        dbg_output[10] += 1;
+//        if(dbg_output[10] == 2.0){
+//            dbg_output[14] = len;
+//            dbg_output[15] = u_right_location;
+//            dbg_output[16] = u;
+//            dbg_output[17] = u_left_location;
+//        }
+//
+//    }
+//    if(isnan(w_top_right)){
+//        dbg_output[11] += 1;
+//    }
+//    if(isnan(w_bot_left)){
+//        dbg_output[12] += 1;
+//    }
+//    if(isnan(w_bot_right)){
+//        dbg_output[13] += 1;
+//    }
+
     return vec4(w_top_left,w_top_right,w_bot_left,w_bot_right);
 
 }
+
+
+
+
+void texture_add(ivec2 uv_arr_idx, int face, int level, int res, int dir_idx, float weight){
+    /**
+    Given a uv(ji) index on a face, find out where in the texture should this be added to
+
+    There are a few different cases:
+    // left-out right-out bot-out top-out. top-left-corner top-right-corner bot-left corner bot-right corner and in face case
+    **/
+
+    int u_idx = uv_arr_idx.x; int v_idx = uv_arr_idx.y;
+
+    //in boundary
+    if(u_idx < res && u_idx >= 0 && v_idx < res && v_idx >=0){
+        int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_idx,v_idx),face,level,res);
+        dbg_output[9] = float(tex_idx);
+        tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+        textures[tex_idx] += weight;
+        return;
+    }
+    //neighbor_idx is the index itself if this index is within boundary
+    int u_neighbor_idx,v_neighbor_idx;
+    if(u_idx < 0){
+        u_neighbor_idx = 0;
+    }else if(u_idx >= res){
+        u_neighbor_idx = res - 1;
+    }else{
+        u_neighbor_idx = u_idx;
+    }
+
+
+    if(v_idx < res){
+        v_neighbor_idx = 0;
+    }else if(v_idx >= res){
+        v_neighbor_idx = res - 1;
+    }else{
+        v_neighbor_idx = v_idx;
+    }
+
+
+    //corner
+    if(
+    (u_idx < 0 && v_idx >=res) ||
+    (u_idx < 0 && v_idx < 0) ||
+    (u_idx >=res && v_idx >=res) ||
+    (u_idx >=res && v_idx < 0))
+    {
+        weight = weight / 3;
+        //Two non-corner texel
+        int edge_idx1 = from_uv_arr_idx_to_edge_idx(u_neighbor_idx, v_idx,face,level,res);
+        int edge_idx2 = from_uv_arr_idx_to_edge_idx(u_idx, v_neighbor_idx,face,level,res);
+        int tex_idx1 = edge_texture_maps[edge_idx1];
+        int tex_idx2 = edge_texture_maps[edge_idx2];
+        tex_idx1 += dir_idx * WHOLE_MIPMAP_OFFSET;
+        tex_idx2 += dir_idx * WHOLE_MIPMAP_OFFSET;
+        textures[tex_idx1] += weight;
+        textures[tex_idx2] += weight;
+        int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_neighbor_idx,v_neighbor_idx),face,level,res);
+        tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+        textures[tex_idx] += weight;
+
+
+        return;
+    }else{
+        //edge case
+        int edge_idx = from_uv_arr_idx_to_edge_idx(u_idx,v_idx,face,level,res);
+        int tex_idx = edge_texture_maps[edge_idx];
+        tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+        textures[tex_idx] += weight;
+        return;
+    }
+
+}
+
+
+
+
 
 
 void process_bilinear_info(BilinearInfo info, int face, int level ,int res, vec4 weight, int dir_idx){
@@ -377,157 +485,161 @@ void process_bilinear_info(BilinearInfo info, int face, int level ,int res, vec4
 
     //Special case -> boundary
     //top-left
-    w = weight.x;
-    if(u_left_idx < 0){
-        if(v_top_idx < 0){
-            //corner
-            w = w / 3;
-            int edge_idx1 = from_uv_arr_idx_to_edge_idx(u_left_idx, v_bot_idx,face,level,res);
-            int edge_idx2 = from_uv_arr_idx_to_edge_idx(u_right_idx, v_top_idx,face,level,res);
-            int tex_idx1 = edge_texture_maps[edge_idx1];
-            int tex_idx2 = edge_texture_maps[edge_idx2];
-            tex_idx1 += dir_idx * WHOLE_MIPMAP_OFFSET;
-            tex_idx2 += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx1] += w;
-            textures[tex_idx2] += w;
-
-            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_right_idx,v_bot_idx),face,level,res);
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }else{
-            //left-out
-            int edge_idx = from_uv_arr_idx_to_edge_idx(u_left_idx,v_top_idx,face,level,res);
-            int tex_idx = edge_texture_maps[edge_idx];
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }
-    }else{
-        if(v_top_idx < 0){
-            //top-out
-            int edge_idx = from_uv_arr_idx_to_edge_idx(u_left_idx,v_top_idx,face,level,res);
-            int tex_idx = edge_texture_maps[edge_idx];
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }else{
-            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_left_idx,v_top_idx),face,level,res);
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }
-    }
-    //top-right
-    w = weight.y;
-    if(u_right_idx >= res){
-        if(v_top_idx < 0){
-            //corner
-            w = w / 3;
-            int edge_idx1 = from_uv_arr_idx_to_edge_idx(u_right_idx, v_bot_idx,face,level,res);
-            int edge_idx2 = from_uv_arr_idx_to_edge_idx(u_left_idx, v_top_idx,face,level,res);
-            int tex_idx1 = edge_texture_maps[edge_idx1];
-            int tex_idx2 = edge_texture_maps[edge_idx2];
-            tex_idx1 += dir_idx * WHOLE_MIPMAP_OFFSET;
-            tex_idx2 += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx1] += w;
-            textures[tex_idx2] += w;
-
-            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_left_idx,v_bot_idx),face,level,res);
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }else{
-            //right-out
-            int edge_idx = from_uv_arr_idx_to_edge_idx(u_right_idx,v_top_idx,face,level,res);
-            int tex_idx = edge_texture_maps[edge_idx];
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }
-    }else{
-        if(v_top_idx < 0){
-            //top-out
-            int edge_idx = from_uv_arr_idx_to_edge_idx(u_right_idx,v_top_idx,face,level,res);
-            int tex_idx = edge_texture_maps[edge_idx];
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }else{
-            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_right_idx,v_top_idx),face,level,res);
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }
-    }
-    //bot-left
-    w = weight.z;
-    if(u_left_idx < 0){
-        if(v_bot_idx >= res){
-            //corner
-            w = w / 3;
-            int edge_idx1 = from_uv_arr_idx_to_edge_idx(u_left_idx, v_top_idx,face,level,res);
-            int edge_idx2 = from_uv_arr_idx_to_edge_idx(u_right_idx, v_bot_idx,face,level,res);
-            int tex_idx1 = edge_texture_maps[edge_idx1];
-            int tex_idx2 = edge_texture_maps[edge_idx2];
-            tex_idx1 += dir_idx * WHOLE_MIPMAP_OFFSET;
-            tex_idx2 += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx1] += w;
-            textures[tex_idx2] += w;
-
-            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_right_idx,v_top_idx),face,level,res);
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }else{
-            //left-out
-            int edge_idx = from_uv_arr_idx_to_edge_idx(u_left_idx,v_bot_idx,face,level,res);
-            int tex_idx = edge_texture_maps[edge_idx];
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }
-    }else{
-        if(v_bot_idx >= res){
-            //bot-out
-            int edge_idx = from_uv_arr_idx_to_edge_idx(u_left_idx,v_bot_idx,face,level,res);
-            int tex_idx = edge_texture_maps[edge_idx];
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }else{
-            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_left_idx,v_bot_idx),face,level,res);
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }
-    }
-    //bot-right
-    w = weight.w;
-    if(u_right_idx >= res){
-        if(v_bot_idx >= res){
-            //corner
-            w = w / 3;
-            int edge_idx1 = from_uv_arr_idx_to_edge_idx(u_right_idx, v_top_idx,face,level,res);
-            int edge_idx2 = from_uv_arr_idx_to_edge_idx(u_left_idx, v_bot_idx,face,level,res);
-            int tex_idx1 = edge_texture_maps[edge_idx1];
-            int tex_idx2 = edge_texture_maps[edge_idx2];
-            tex_idx1 += dir_idx * WHOLE_MIPMAP_OFFSET;
-            tex_idx2 += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx1] += w;
-            textures[tex_idx2] += w;
-
-            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_left_idx,v_top_idx),face,level,res);
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }else{
-            //right-out
-            int edge_idx = from_uv_arr_idx_to_edge_idx(u_right_idx,v_bot_idx,face,level,res);
-            int tex_idx = edge_texture_maps[edge_idx];
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }
-    }else{
-        if(u_right_idx >= res){
-            //bot-out
-            int edge_idx = from_uv_arr_idx_to_edge_idx(u_right_idx,v_bot_idx,face,level,res);
-            int tex_idx = edge_texture_maps[edge_idx];
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }else{
-            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_right_idx,v_bot_idx),face,level,res);
-            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
-            textures[tex_idx] += w;
-        }
-    }
+    texture_add(ivec2(u_left_idx,v_top_idx),face,level,res,dir_idx,weight.x);
+    texture_add(ivec2(u_right_idx,v_top_idx),face,level,res,dir_idx,weight.y);
+    texture_add(ivec2(u_left_idx,v_bot_idx),face,level,res,dir_idx,weight.z);
+    texture_add(ivec2(u_right_idx,v_bot_idx),face,level,res,dir_idx,weight.w);
+//    w = weight.x;
+//    if(u_left_idx < 0){
+//        if(v_top_idx < 0){
+//            //corner
+//            w = w / 3;
+//            int edge_idx1 = from_uv_arr_idx_to_edge_idx(u_left_idx, v_bot_idx,face,level,res);
+//            int edge_idx2 = from_uv_arr_idx_to_edge_idx(u_right_idx, v_top_idx,face,level,res);
+//            int tex_idx1 = edge_texture_maps[edge_idx1];
+//            int tex_idx2 = edge_texture_maps[edge_idx2];
+//            tex_idx1 += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            tex_idx2 += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx1] += w;
+//            textures[tex_idx2] += w;
+//
+//            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_right_idx,v_bot_idx),face,level,res);
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }else{
+//            //left-out
+//            int edge_idx = from_uv_arr_idx_to_edge_idx(u_left_idx,v_top_idx,face,level,res);
+//            int tex_idx = edge_texture_maps[edge_idx];
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }
+//    }else{
+//        if(v_top_idx < 0){
+//            //top-out
+//            int edge_idx = from_uv_arr_idx_to_edge_idx(u_left_idx,v_top_idx,face,level,res);
+//            int tex_idx = edge_texture_maps[edge_idx];
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }else{
+//            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_left_idx,v_top_idx),face,level,res);
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }
+//    }
+//    //top-right
+//    w = weight.y;
+//    if(u_right_idx >= res){
+//        if(v_top_idx < 0){
+//            //corner
+//            w = w / 3;
+//            int edge_idx1 = from_uv_arr_idx_to_edge_idx(u_right_idx, v_bot_idx,face,level,res);
+//            int edge_idx2 = from_uv_arr_idx_to_edge_idx(u_left_idx, v_top_idx,face,level,res);
+//            int tex_idx1 = edge_texture_maps[edge_idx1];
+//            int tex_idx2 = edge_texture_maps[edge_idx2];
+//            tex_idx1 += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            tex_idx2 += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx1] += w;
+//            textures[tex_idx2] += w;
+//
+//            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_left_idx,v_bot_idx),face,level,res);
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }else{
+//            //right-out
+//            int edge_idx = from_uv_arr_idx_to_edge_idx(u_right_idx,v_top_idx,face,level,res);
+//            int tex_idx = edge_texture_maps[edge_idx];
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }
+//    }else{
+//        if(v_top_idx < 0){
+//            //top-out
+//            int edge_idx = from_uv_arr_idx_to_edge_idx(u_right_idx,v_top_idx,face,level,res);
+//            int tex_idx = edge_texture_maps[edge_idx];
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }else{
+//            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_right_idx,v_top_idx),face,level,res);
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }
+//    }
+//    //bot-left
+//    w = weight.z;
+//    if(u_left_idx < 0){
+//        if(v_bot_idx >= res){
+//            //corner
+//            w = w / 3;
+//            int edge_idx1 = from_uv_arr_idx_to_edge_idx(u_left_idx, v_top_idx,face,level,res);
+//            int edge_idx2 = from_uv_arr_idx_to_edge_idx(u_right_idx, v_bot_idx,face,level,res);
+//            int tex_idx1 = edge_texture_maps[edge_idx1];
+//            int tex_idx2 = edge_texture_maps[edge_idx2];
+//            tex_idx1 += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            tex_idx2 += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx1] += w;
+//            textures[tex_idx2] += w;
+//
+//            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_right_idx,v_top_idx),face,level,res);
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }else{
+//            //left-out
+//            int edge_idx = from_uv_arr_idx_to_edge_idx(u_left_idx,v_bot_idx,face,level,res);
+//            int tex_idx = edge_texture_maps[edge_idx];
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }
+//    }else{
+//        if(v_bot_idx >= res){
+//            //bot-out
+//            int edge_idx = from_uv_arr_idx_to_edge_idx(u_left_idx,v_bot_idx,face,level,res);
+//            int tex_idx = edge_texture_maps[edge_idx];
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }else{
+//            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_left_idx,v_bot_idx),face,level,res);
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }
+//    }
+//    //bot-right
+//    w = weight.w;
+//    if(u_right_idx >= res){
+//        if(v_bot_idx >= res){
+//            //corner
+//            w = w / 3;
+//            int edge_idx1 = from_uv_arr_idx_to_edge_idx(u_right_idx, v_top_idx,face,level,res);
+//            int edge_idx2 = from_uv_arr_idx_to_edge_idx(u_left_idx, v_bot_idx,face,level,res);
+//            int tex_idx1 = edge_texture_maps[edge_idx1];
+//            int tex_idx2 = edge_texture_maps[edge_idx2];
+//            tex_idx1 += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            tex_idx2 += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx1] += w;
+//            textures[tex_idx2] += w;
+//
+//            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_left_idx,v_top_idx),face,level,res);
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }else{
+//            //right-out
+//            int edge_idx = from_uv_arr_idx_to_edge_idx(u_right_idx,v_bot_idx,face,level,res);
+//            int tex_idx = edge_texture_maps[edge_idx];
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }
+//    }else{
+//        if(u_right_idx >= res){
+//            //bot-out
+//            int edge_idx = from_uv_arr_idx_to_edge_idx(u_right_idx,v_bot_idx,face,level,res);
+//            int tex_idx = edge_texture_maps[edge_idx];
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }else{
+//            int tex_idx = from_uv_arr_idx_to_texture_idx(ivec2(u_right_idx,v_bot_idx),face,level,res);
+//            tex_idx += dir_idx * WHOLE_MIPMAP_OFFSET;
+//            textures[tex_idx] += w;
+//        }
+//    }
 
 }
 
@@ -535,7 +647,13 @@ void process_bilinear_info(BilinearInfo info, int face, int level ,int res, vec4
 void main(){
 
     int id = int(gl_GlobalInvocationID.x);
+
+    if(id >= 1){
+        return;
+    }
+
     int sample_idx = int(gl_GlobalInvocationID.y);
+
 
 
     int info_idx = sample_idx * 24 + id;

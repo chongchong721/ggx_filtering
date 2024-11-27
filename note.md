@@ -214,3 +214,7 @@ Parameterization if there is no frame?
 change default setting from clipping to not clipping view ndf
 
 To regularize the direction to not go below the hemisphere, some regularization terms should be added
+
+
+Use VNDF,
+Compare IS since IS is implemented.

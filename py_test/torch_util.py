@@ -13,6 +13,25 @@ texel_dir_128_torch_map = torch.from_numpy(map_util.texel_directions(128).astype
 texel_dir_128_torch = texel_dir_128_torch_map / torch.linalg.norm(texel_dir_128_torch_map, dim=-1, keepdim=True).to(device)
 
 
+class QuadModel_View_Relative_Frame_Full_Interaction_View_Theta2(torch.nn.Module):
+    """
+    Add more interactions between u,v,theta
+
+    c0 + c1 * u_normal^2 + c2 * v_normal^2 + c3 * u_reflected^2 + c4 * v_reflected^2
+    + c5 * view_theta^2 + c6 * view_theta
+    + c7 * u_normal^2 * view_theta + c8 * v_normal^2 * view_theta
+    + c9 * u_reflected^2 * view_theta + c10 * v_reflected^2 * view_theta
+    + c11 * u_normal^2 * view_theta2 + c12 * v_normal^2 * view_theta2
+    + c13 * u_reflected^2 * view_theta2 + c14 * v_reflected^2 * view_theta2
+    """
+    def __init__(self, n_sample_per_frame):
+        super(QuadModel_View_Relative_Frame_Full_Interaction_View_Theta2, self).__init__()
+        self.params = torch.nn.Parameter(torch.rand(5,15,n_sample_per_frame), requires_grad=True)
+
+    def forward(self):
+        return self.params
+
+
 class QuadModel_View_Relative_Frame_Full_Interaction(torch.nn.Module):
     """
     Add more interactions between u,v,theta
@@ -185,7 +204,8 @@ def create_view_model_dict():
         "reflect_norm":QuadModel_View_Reflection_Norm,
         "relative_frame":QuadModel_View_Relative_Frame,
         "relative_frame_full":QuadModel_View_Relative_Frame_Full,
-        "relative_frame_full_interaction":QuadModel_View_Relative_Frame_Full_Interaction
+        "relative_frame_full_interaction":QuadModel_View_Relative_Frame_Full_Interaction,
+        "relative_frame_full_interaction_view_theta2":QuadModel_View_Relative_Frame_Full_Interaction_View_Theta2
     }
 
     return view_model_dict
@@ -1313,7 +1333,7 @@ def sample_directions_over_hemispheres(normals, uv, no_parallel = False, cos_the
     phi = u * 2 * np.pi
     if no_parallel:
         # dot(v,n) < 1.0
-        cos_threshold = 0.99995
+        cos_threshold = 0.999925
         cos_theta = v * cos_threshold
     else:
         cos_theta = v

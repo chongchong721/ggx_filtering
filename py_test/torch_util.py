@@ -487,7 +487,7 @@ def rotate_90degree_awayfrom_n(vectors,normals):
     batch_size = vectors.shape[0]
 
     #determine near-parallel case
-    threshold = 0.99995
+    threshold = 0.999925
     cosine = torch.sum(vectors * normals, dim=-1, keepdim=True)
     near_parallel = cosine > threshold
 

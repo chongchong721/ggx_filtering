@@ -1223,7 +1223,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             if not view_dependent:
                 all_locations_cube,all_locations =  torch_util.sample_location(n_sample_per_level,rng)
             else:
-                view_dirs,view_theta,all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level, rng, no_parallel=True, cos_theta_max=0.1)
+                view_dirs,view_theta,all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level, rng, no_parallel=True, cos_theta_max=1.0)
             #new parameter
 
             #new reference

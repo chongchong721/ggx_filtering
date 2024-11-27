@@ -476,6 +476,11 @@ def compute_ggx_vndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_direc
             raise NotImplementedError
         vndf = vndf * j
 
+    VdotH = torch.einsum('bl,bijkl->bijk', view_direction, half_vec)
+    j_h2l = (4 * VdotH)
+    j_h2l = torch.where(j_h2l > 1e-7, j_h2l, 1e-7)
+    vndf = vndf / j_h2l
+
     vndf = vndf.reshape(vndf.shape + (1,))
     if clip_ndf:
         vndf = torch_util.clip_below_horizon_part_view_dependent(normal_directions, vndf, texel_dir_128_torch)

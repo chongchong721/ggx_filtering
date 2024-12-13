@@ -214,3 +214,11 @@ Parameterization if there is no frame?
 change default setting from clipping to not clipping view ndf
 
 To regularize the direction to not go below the hemisphere, some regularization terms should be added
+
+
+Use VNDF,
+
+Grazing angles and non-grazing angles can not get optimized at the same time
+grazing angles brighter?(no sure why, happens both is and filter)
+
+v close to n -> filtered image face 2 u 0.26 0.19. filtered image around that part is wrong

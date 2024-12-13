@@ -58,6 +58,52 @@ def ndf_isotropic(a,cos_theta):
     ndf = np.where(cos_theta > 0.0, ndf, 0.0)
     return ndf
 
+
+
+def importance_sampling_ndf(uv, n_dir, ggx_alpha, normal_direction):
+    """
+    Numpy version, importance sample GGX D(h)<h,n>
+    importance sampling n_dir directions given a normal direction
+    :param uv:
+    :param n_dir:
+    :param ggx_alpha:
+    :param normal_direction: [3,], should be normalized
+    :return:
+    """
+
+    u = uv[:,0]
+    v = uv[:,1]
+    assert u.size == n_dir
+    cos_theta = np.sqrt((1-u)/((ggx_alpha**2-1) * u + 1))
+    sin_theta = np.sqrt(1 - cos_theta**2)
+    phi = np.pi * 2 * v
+    x = np.cos(phi) * sin_theta
+    y = np.sin(phi) * sin_theta
+    z = cos_theta
+    sampled_dirs = np.stack((x, y, z), axis=1)
+
+    up_vector = np.array([0.0,0.0,1.0]) if normal_direction[-1] < 0.999 else np.array([1.0,0.0,0.0])
+    tangent_x = np.cross(up_vector, normal_direction)
+    tangent_x = tangent_x / np.linalg.norm(tangent_x)
+    tangent_y = np.cross(normal_direction, tangent_x)
+
+    #basis [3,] sample_dirs[i] -> [N,
+
+    directions = (tangent_x * (sampled_dirs[:,0])[:,np.newaxis] +
+                  tangent_y * (sampled_dirs[:,1])[:,np.newaxis] +
+                  normal_direction * (sampled_dirs[:,2])[:,np.newaxis])
+
+
+    ndf = ndf_isotropic(ggx_alpha,cos_theta)
+
+    pdf_h = ndf * cos_theta
+
+    return directions, pdf_h, ndf
+
+
+
+
+
 @numba.jit(nopython=True)
 def loop_compute(normal_direction,normalized_xyz_input,j_weighted_input,alpha,delta_s):
     cosine = np.dot(normalized_xyz_input, normal_direction)
@@ -87,7 +133,7 @@ def loop_compute_view_dependent(normal_direction,normalized_xyz_input,j_weighted
     ndf = np.where(NdotL > 0.0, ndf, 0.0)
 
     VdotH = np.dot(half_vector, view_direction)
-
+    VdotH = np.where(VdotH > 1e-6, VdotH, 1e-6)
     multiplier = ndf * NdotH / (4 * VdotH)
 
     integral_sum = np.stack((multiplier, multiplier, multiplier), axis=-1) * j_weighted_input
@@ -97,11 +143,64 @@ def loop_compute_view_dependent(normal_direction,normalized_xyz_input,j_weighted
 
 
 
-def loop_compute_is(normal_direction, j_weighted_input ):
-    pass
+def loop_compute_is_view_dependent(normal_direction, ggx_alpha ,mipmaps, n_dir, rng, view_direction, ref_res):
+    uv = rng.random((n_dir,2))
+    halfvec_dirs,pdf_h, ndf = importance_sampling_ndf(uv,n_dir,ggx_alpha,normal_direction)
+    light_dirs = map_util.get_reflected_vector_vectorized(halfvec_dirs,view_direction)
+
+
+    #VdotH = LdotH
+    LdotH = np.dot(halfvec_dirs, view_direction.flatten())
+    #LdotH = np.where(LdotH > 1e-6, LdotH, 1e-6)
+    pdf_l = pdf_h / (4 * LdotH)
+
+
+    #push light_dirs to the cube
+    light_max = np.max(np.abs(light_dirs),axis=-1, keepdims=True)
+    light_dirs_map = light_dirs / light_max
+
+    jacobian = map_util.jacobian_vertorized(light_dirs_map)
+
+
+    # Activision paper algorithm
+    SA_sample = 4 * np.pi / n_dir / pdf_l
+    SA_texel = 4 * jacobian / (ref_res**2)
 
 
 
+
+    # EA Frosbite algorithm
+    # SA_sample = 1.0 / (n_dir * pdf_l)
+    # SA_texel = 4.0 * np.pi / (6.0 * ref_res * ref_res)
+
+    mip_level = 0.5 * np.log2(SA_sample / SA_texel)
+    mip_level = np.clip(mip_level,0,6)
+    #mip_level = np.zeros(n_dir)
+
+
+    NdotL = np.dot(light_dirs, normal_direction)
+
+    #do not include below hemispherer sample
+    valid_idx = NdotL > 0.0
+
+    valid_light_dirs_map = light_dirs_map[valid_idx]
+    valid_NdotL = NdotL[valid_idx]
+    valid_mip_level = mip_level[valid_idx]
+
+    result = mipmaps.interpolate_all(valid_light_dirs_map,valid_mip_level)
+
+    NdotL_weighted_result = result * valid_NdotL[:,np.newaxis]
+
+    # valid_ndf = ndf[valid_idx]
+    # valid_pdf_l = pdf_l[valid_idx]
+    #result = result * valid_ndf[:,np.newaxis] / valid_pdf_l[:,np.newaxis]
+
+    # With empirical NdotL weighting
+    final_result = np.sum(NdotL_weighted_result,axis=0) / np.sum(valid_NdotL)
+
+    return final_result
+
+    
 
 def loop_compute_nojit(normal_direction,normalized_xyz_input,j_weighted_input,alpha,delta_s):
     half_vector = map_util.get_half_vector_vectorized(normalized_xyz_input, normal_direction)
@@ -257,16 +356,74 @@ def compute_reference(input_map, cubemap_res, ref_res, GGX_alpha, save_file_name
     return int_result
 
 
+def compute_is_filtered_result(input_map, cubemap_res, ref_res, GGX_alpha, n_sample, save_file_name=None):
+    # Now loop through every texel
+    int_result = np.zeros((6, ref_res, ref_res, input_map.shape[-1]))
+    mipmaps = interpolation.downsample_box_filter(input_map, 7)
 
-def compute_is_filtered_result(input_map,cubemap_res,ref_res,GGX_alpha,save_file_name=None):
-    #Now loop through every texel
-    int_result = np.zeros((6,ref_res,ref_res,input_map.shape[-1]))
+    interpolator = interpolation.trilinear_mipmap_interpolator(mipmaps)
 
     # generate xyz for each face
     xyz_output = map_util.texel_directions(ref_res)
     xyz_input = map_util.texel_directions(cubemap_res)
-    #integral area
+    # integral area
     delta_s = 4.0 / cubemap_res / cubemap_res
+
+    jacobian = map_util.jacobian_vertorized(xyz_input)
+
+    j_weighted_input = np.stack((jacobian, jacobian, jacobian), axis=-1) * input_map
+
+    normalized_xyz_input = mat_util.normalized(xyz_input)
+    normalized_xyz_output = mat_util.normalized(xyz_output)
+
+    total_it = 6 * ref_res * ref_res
+
+    normalized_xyz_input_tmp = np.reshape(normalized_xyz_input, (-1, 3))
+    j_weighted_input_tmp = np.reshape(j_weighted_input, (-1, 3))
+
+    rng = np.random.default_rng()
+
+    with tqdm(total=total_it, desc="texel progress") as pbar:
+        # loop through every texel
+        for face_idx in range(6):
+            for i in range(ref_res):
+                for j in range(ref_res):
+                    # l = v = h
+                    normal_direction = normalized_xyz_output[face_idx, i, j]
+                    # Now, compute ndf for each direction, using input
+
+                    # The computation of cosine requires all normalized vectors
+                    # integral = loop_compute(normal_direction,normalized_xyz_input_tmp,j_weighted_input_tmp,GGX_alpha,delta_s)
+                    integral = loop_compute_is_view_dependent(normal_direction, GGX_alpha, interpolator, n_sample, rng, normal_direction)
+                    # cosine = np.dot(normalized_xyz_input,normal_direction)
+                    # ndf = GGX.ndf_isotropic(cosine)
+                    #
+                    # integral_sum = np.stack((ndf,ndf,ndf),axis=-1) * j_weighted_input
+                    #
+                    # integral = np.sum(integral_sum, axis=(0,1,2)) * delta_s
+                    int_result[face_idx, i, j] = integral
+                    pbar.update(1)
+
+    # file_name = "res" + str(ref_res) + "alpha" + str(GGX_alpha) + ".npy"
+    if save_file_name is not None:
+        np.save("./refs/" + save_file_name, int_result)
+
+    return int_result
+
+
+def compute_is_view_dependent_filtered_result(input_map,cubemap_res,ref_res,GGX_alpha,n_sample,view_direction = None,save_file_name=None):
+    #Now loop through every texel
+    int_result = np.zeros((6,ref_res,ref_res,input_map.shape[-1]))
+
+    mipmaps = interpolation.downsample_box_filter(input_map,7)
+    #mipmaps = interpolation.downsample_full(input_map,7)
+
+    interpolator = interpolation.trilinear_mipmap_interpolator(mipmaps)
+
+    # generate xyz for each face
+    xyz_output = map_util.texel_directions(ref_res)
+    xyz_input = map_util.texel_directions(cubemap_res)
+
 
     jacobian = map_util.jacobian_vertorized(xyz_input)
 
@@ -277,29 +434,33 @@ def compute_is_filtered_result(input_map,cubemap_res,ref_res,GGX_alpha,save_file
 
     total_it = 6 * ref_res * ref_res
 
-    normalized_xyz_input_tmp = np.reshape(normalized_xyz_input,(-1,3))
-    j_weighted_input_tmp = np.reshape(j_weighted_input,(-1,3))
+    rng = np.random.default_rng()
 
     with tqdm(total=total_it, desc="texel progress") as pbar:
         #loop through every texel
         for face_idx in range(6):
             for i in range(ref_res):
                 for j in range(ref_res):
-                    # l = v = h
                     normal_direction = normalized_xyz_output[face_idx,i,j]
-                    # Now, compute ndf for each direction, using input
+                    if view_direction is not None:
+                        if np.dot(normal_direction,view_direction.flatten()) < 0.0:
+                            int_result[face_idx, i, j] = 0
+                        else:
+                            # Now, compute ndf for each direction, using input
 
-                    # The computation of cosine requires all normalized vectors
-                    #integral = loop_compute(normal_direction,normalized_xyz_input_tmp,j_weighted_input_tmp,GGX_alpha,delta_s)
-                    integral = loop_compute_nojit(normal_direction, normalized_xyz_input_tmp, j_weighted_input_tmp, GGX_alpha,
-                                            delta_s)
-                    # cosine = np.dot(normalized_xyz_input,normal_direction)
-                    # ndf = GGX.ndf_isotropic(cosine)
-                    #
-                    # integral_sum = np.stack((ndf,ndf,ndf),axis=-1) * j_weighted_input
-                    #
-                    # integral = np.sum(integral_sum, axis=(0,1,2)) * delta_s
-                    int_result[face_idx,i,j] = integral
+                            # The computation of cosine requires all normalized vectors
+                            #integral = loop_compute(normal_direction,normalized_xyz_input_tmp,j_weighted_input_tmp,GGX_alpha,delta_s)
+                            integral = loop_compute_is_view_dependent(normal_direction,GGX_alpha,interpolator,n_sample,rng, view_direction, ref_res)
+                            # cosine = np.dot(normalized_xyz_input,normal_direction)
+                            # ndf = GGX.ndf_isotropic(cosine)
+                            #
+                            # integral_sum = np.stack((ndf,ndf,ndf),axis=-1) * j_weighted_input
+                            #
+                            # integral = np.sum(integral_sum, axis=(0,1,2)) * delta_s
+                            int_result[face_idx,i,j] = integral
+                    else:
+                        integral = loop_compute_is_view_dependent(normal_direction,GGX_alpha,interpolator,n_sample,rng, normal_direction, ref_res)
+                        int_result[face_idx,i,j] = integral
                     pbar.update(1)
 
     #file_name = "res" + str(ref_res) + "alpha" + str(GGX_alpha) + ".npy"

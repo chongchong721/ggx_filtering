@@ -683,6 +683,23 @@ def downsample_full(original_map, n_mipmap_level, j_inv = False):
 
 
 
+def downsample_box_filter(original_map, n_mipmap_level):
+    mipmaps = []
+    high_res = original_map.shape[1]
+    previous_level_map = original_map
+    for i in range(n_mipmap_level):
+        if i == 0:
+            mipmaps.append(original_map)
+        else:
+            new_level_map = skimage.measure.block_reduce(previous_level_map,(1,2,2,1),np.mean)
+            mipmaps.append(new_level_map)
+            previous_level_map = new_level_map
+
+    return mipmaps
+
+
+
+
 #TODO: implement trilinear interpolation for mipmap?
 class trilinear_mipmap_interpolator:
     """
@@ -857,7 +874,28 @@ def lerp(array_1,array_2, t):
 
     return tmp1 + tmp2
 
+def test_interpolator():
+    mipmaps = []
+    for i in range(7):
+        res = 2 << (6-i)
+        tmp = np.full((6,res,res,3),i)
+        mipmaps.append(tmp)
+    interpolator = trilinear_mipmap_interpolator(mipmaps)
+
+    dirs = map_util.sample_location(20)
+    level = np.random.random(20)
+    level = level * 6
+
+    result = interpolator.interpolate_all(dirs, level)
+
+    should_be = (level - np.floor(level)) * np.ceil(level) + (np.ceil(level) - level) *np.floor(level)
+
+    print("111")
+
+
+
 
 
 if __name__ == '__main__':
+    test_interpolator()
     recurrence()

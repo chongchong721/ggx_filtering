@@ -31,9 +31,12 @@ from LBFGS import FullBatchLBFGS,LBFGS
 import reference
 from filter import synthetic_filter_showcase
 
+import image_read
+
 
 def process_view_option(view_option_str:str,view_reflection_parameterization:bool):
-    valid_option = ["view_only","even_only",'odd',"reflect_norm","relative_frame","relative_frame_full","relative_frame_full_interaction"]
+    valid_option = ["view_only","even_only",'odd',"reflect_norm","relative_frame","relative_frame_full","relative_frame_full_interaction"
+                    ,"relative_frame_full_interaction_view_theta2"]
     if view_option_str.lower() in valid_option:
         view_dependent = True
     else:
@@ -405,6 +408,16 @@ def stack_parameter(view_option_str, view_theta,view_theta2,theta_phi_normal_ten
         parameter = torch.stack(
             (theta2_normal, phi2_normal, theta2_reflection, phi2_reflection, view_theta2, view_theta,
              view_theta * theta2_normal, view_theta * phi2_normal, view_theta * theta2_reflection, view_theta * phi2_reflection)
+        )
+    elif view_option_str == "relative_frame_full_interaction_view_theta2":
+        theta2_normal = theta_phi_normal_tensor[frame_idx, 2, :]
+        phi2_normal = theta_phi_normal_tensor[frame_idx, 3, :]
+        theta2_reflection = theta_phi_reflection_tensor[frame_idx, 2, :]
+        phi2_reflection = theta_phi_reflection_tensor[frame_idx, 3, :]
+        parameter = torch.stack(
+            (theta2_normal, phi2_normal, theta2_reflection, phi2_reflection, view_theta2, view_theta,
+             view_theta * theta2_normal, view_theta * phi2_normal, view_theta * theta2_reflection, view_theta * phi2_reflection,
+             view_theta2 * theta2_normal, view_theta2 * phi2_normal, view_theta2 * theta2_reflection, view_theta2 * phi2_reflection)
         )
     else:
         raise NotImplementedError
@@ -1075,6 +1088,56 @@ def precompute_opt_info(texel_directions, n_sample_per_level):
     return weight_per_frame, xyz_per_frame, theta_phi_per_frame
 
 
+def visualize_high_loss_view_dependent(pushed_back_param, ref_param, threshold:float, view_theta):
+    (n_sample_per_frame, n_sample_per_level, ref_list,all_precomputed_info, params, adjust_level, allow_neg_weight,
+     view_option_str,view_reflection_parameterization, device, all_locations) = pushed_back_param
+    ggx_alpha, all_locations,tex_directions_res, tex_directions_res_map,view_dirs, ggx_ref_jac_weight, view_ndf_clipping = ref_param
+
+    ref_list = compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, all_locations,
+                                                                   tex_directions_res, tex_directions_res_map,
+                                                                   view_dirs, ggx_ref_jac_weight, view_ndf_clipping)
+    ref_list_normalized = ref_list / torch.sum(ref_list, dim=(1, 2, 3, 4), keepdim=True)
+
+    tmp_pushed_back_result, all_NdotL = multiple_texel_full_optimization_view_dependent_vectorized_vec_prepare(
+        n_sample_per_frame, n_sample_per_level, ref_list,
+        all_precomputed_info, params, adjust_level, allow_neg_weight, view_option_str,
+        view_reflection_parameterization, device, all_locations)
+
+    tmp_pushed_back_sum = torch.sum(tmp_pushed_back_result, dim=[1, 2, 3, 4], keepdim=True)
+    tmp_pushed_back_result_normalized = tmp_pushed_back_result /  (tmp_pushed_back_sum + 1e-7)
+    diff = torch.abs(ref_list_normalized - tmp_pushed_back_result_normalized)
+    diff = torch.sum(diff, dim=[1, 2, 3, 4])
+
+    high_idx = diff > threshold
+
+    ref_high = ref_list[high_idx]
+    ref_list_normalized_high = ref_list_normalized[high_idx]
+    pushed_back_result_high = tmp_pushed_back_result[high_idx]
+    pushed_back_result_high_normalized = tmp_pushed_back_result_normalized[high_idx]
+
+    count = ref_list_normalized_high.shape[0]
+    for i in range(count):
+        ref_cube = ref_list_normalized_high[i]
+        pushed_back_cube = pushed_back_result_high_normalized[i]
+        res = 128
+
+        ref_cube = ref_cube.repeat([1,1,1,3])
+        pushed_back_cube = pushed_back_cube.repeat([1,1,1,3])
+
+        ref_cube = ref_cube.detach().numpy()
+        pushed_back_cube = pushed_back_cube.detach().numpy()
+
+        prefix = "./high_loss_visualization/"
+
+        ref_file_name = prefix + "{}_ref{:.3f}".format(i,ggx_alpha) + ".exr"
+        pushed_back_file_name = prefix + "{}_pushed_back{:.3f}".format(i,ggx_alpha) + ".exr"
+
+        image_read.gen_cubemap_preview_image(ref_cube,res,filename = ref_file_name)
+        image_read.gen_cubemap_preview_image(pushed_back_cube,res,filename = pushed_back_file_name)
+
+
+
+
 def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame, ggx_alpha = 0.1, adjust_level = False,
                                 vectorize = True, optimizer_type = "adam", random_shuffle = False, allow_neg_weight = False,
                                 ggx_ref_jac_weight = 'None', learning_rate = 1e-4, view_option_str = "None"
@@ -1223,7 +1286,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             if not view_dependent:
                 all_locations_cube,all_locations =  torch_util.sample_location(n_sample_per_level,rng)
             else:
-                view_dirs,view_theta,all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level, rng, no_parallel=True, cos_theta_max=1.0)
+                view_dirs,view_theta,all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level, rng, no_parallel=True, cos_theta_max=0.1)
             #new parameter
 
             #new reference
@@ -1290,6 +1353,15 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                 regularization_term = torch.nn.functional.relu(-all_NdotL)
                 reg_lambda = 1 / n_sample_per_frame / n_sample_per_level * 0.7
                 regularization_term = torch.sum(regularization_term) * reg_lambda
+
+                if visualize_loss:
+                    push_back_param = (n_sample_per_frame,n_sample_per_level, ref_list,
+                                    all_precomputed_info,params,adjust_level,allow_neg_weight,view_option_str,
+                                    view_reflection_parameterization,device,all_locations)
+                    ref_param = (ggx_alpha, all_locations,tex_directions_res, tex_directions_res_map,
+                                                view_dirs, ggx_ref_jac_weight, view_ndf_clipping)
+                    visualize_high_loss_view_dependent(push_back_param,ref_param,0.4, view_theta)
+
 
             tmp_pushed_back_sum = torch.sum(tmp_pushed_back_result, dim=[1, 2, 3, 4], keepdim=True)
             tmp_pushed_back_result /= (tmp_pushed_back_sum + 1e-7)
@@ -1914,7 +1986,7 @@ def test_vectorized_multiple_opt(ggx_alpha):
 if __name__ == "__main__":
     print("CUDA Availability:",torch.cuda.is_available())
 
-    (n_sample_per_frame,n_sample_per_level, ggx_info, flag_constant, flag_adjust_level, optimizer_string,
+    (n_sample_per_frame_g,n_sample_per_level_g, ggx_info, flag_constant, flag_adjust_level, optimizer_string,
      random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr,
      view_option, view_reflection_parameterization_g , view_ndf_clipping_g, use_vndf_g)=  process_cmd()
     #
@@ -1934,7 +2006,7 @@ if __name__ == "__main__":
           "View dependency Option:{}\n"
           "Parameterize using reflected direction:{}\n"
           "Clipping below horizong ndf:{}\n"
-          "Use VNDF as reference:{}".format(ggx_alpha,n_sample_per_level,n_sample_per_frame,flag_adjust_level,flag_constant,optimizer_string,lr,random_shuffle,allow_neg_weight, ggx_ref_jac_weight,view_option,view_reflection_parameterization_g,view_ndf_clipping_g,use_vndf_g))
+          "Use VNDF as reference:{}".format(ggx_alpha,n_sample_per_level_g,n_sample_per_frame_g,flag_adjust_level,flag_constant,optimizer_string,lr,random_shuffle,allow_neg_weight, ggx_ref_jac_weight,view_option,view_reflection_parameterization_g,view_ndf_clipping_g,use_vndf_g))
 
     # #test_vectorized_multiple_opt(ggx_alpha)
     #
@@ -1948,11 +2020,11 @@ if __name__ == "__main__":
 
     #t = create_downsample_pattern(130)
     #t = torch_uv_to_xyz_vectorized(t,0)
-    optimize_multiple_locations(n_sample_per_level,flag_constant,n_sample_per_frame, ggx_alpha, adjust_level=flag_adjust_level,
+    optimize_multiple_locations(n_sample_per_level_g,flag_constant,n_sample_per_frame_g, ggx_alpha, adjust_level=flag_adjust_level,
                                 vectorize=True, optimizer_type=optimizer_string, random_shuffle=random_shuffle,
                                 allow_neg_weight=allow_neg_weight, ggx_ref_jac_weight=ggx_ref_jac_weight,
                                 view_option_str=view_option ,learning_rate=lr,view_reflection_parameterization=view_reflection_parameterization_g,
-                                view_ndf_clipping=view_ndf_clipping_g)
+                                view_ndf_clipping=view_ndf_clipping_g, use_vndf = use_vndf_g)
     #optimize_function()
 
     # dummy location

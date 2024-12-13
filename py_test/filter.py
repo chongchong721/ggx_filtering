@@ -179,6 +179,58 @@ def fetch_sample_view_dependent_python_table(tex_input,output_level, coeff_table
                                  coeff_weight_table[8] * phi_normal2 * view_theta + coeff_weight_table[
                                      9] * theta_reflection2 * view_theta + coeff_weight_table[
                                      10] * phi_reflection2 * view_theta)
+            elif view_option_str == "relative_frame_full_interaction_view_theta2":
+                coeff_x = (coeff_x_table[0] + coeff_x_table[1] * theta_normal2 + coeff_x_table[2] * phi_normal2 +
+                           coeff_x_table[3] * theta_reflection2 + coeff_x_table[4] + phi_reflection2 + coeff_x_table[
+                               5] * view_theta2 + coeff_x_table[6] * view_theta + coeff_x_table[
+                               7] * theta_normal2 * view_theta + coeff_x_table[8] * phi_normal2 * view_theta +
+                           coeff_x_table[9] * theta_reflection2 * view_theta + coeff_x_table[10] * phi_reflection2 * view_theta +
+                           coeff_x_table[11] * theta_normal2 *view_theta2 + coeff_x_table[12] * phi_normal2 * view_theta2 +
+                           coeff_x_table[13] * theta_reflection2 * view_theta2 + coeff_x_table[14] * phi_reflection2 * view_theta2)
+                coeff_y = (coeff_y_table[0] + coeff_y_table[1] * theta_normal2 + coeff_y_table[2] * phi_normal2 +
+                           coeff_y_table[3] * theta_reflection2 + coeff_y_table[4] + phi_reflection2 + coeff_y_table[
+                               5] * view_theta2 + coeff_y_table[6] * view_theta + coeff_y_table[
+                               7] * theta_normal2 * view_theta + coeff_y_table[8] * phi_normal2 * view_theta +
+                           coeff_y_table[9] * theta_reflection2 * view_theta + coeff_y_table[
+                               10] * phi_reflection2 * view_theta +
+                           coeff_y_table[11] * theta_normal2 * view_theta2 + coeff_y_table[
+                               12] * phi_normal2 * view_theta2 +
+                           coeff_y_table[13] * theta_reflection2 * view_theta2 + coeff_y_table[
+                               14] * phi_reflection2 * view_theta2)
+                coeff_z = (coeff_z_table[0] + coeff_z_table[1] * theta_normal2 + coeff_z_table[2] * phi_normal2 +
+                           coeff_z_table[3] * theta_reflection2 + coeff_z_table[4] + phi_reflection2 + coeff_z_table[
+                               5] * view_theta2 + coeff_z_table[6] * view_theta + coeff_z_table[
+                               7] * theta_normal2 * view_theta + coeff_z_table[8] * phi_normal2 * view_theta +
+                           coeff_z_table[9] * theta_reflection2 * view_theta + coeff_z_table[
+                               10] * phi_reflection2 * view_theta +
+                           coeff_z_table[11] * theta_normal2 * view_theta2 + coeff_z_table[
+                               12] * phi_normal2 * view_theta2 +
+                           coeff_z_table[13] * theta_reflection2 * view_theta2 + coeff_z_table[
+                               14] * phi_reflection2 * view_theta2)
+                sample_level = (coeff_level_table[0] + coeff_level_table[1] * theta_normal2 + coeff_level_table[
+                    2] * phi_normal2 +
+                               coeff_level_table[3] * theta_reflection2 + coeff_level_table[4] + phi_reflection2 +
+                               coeff_level_table[
+                                   5] * view_theta2 + coeff_level_table[6] * view_theta + coeff_level_table[
+                                   7] * theta_normal2 * view_theta + coeff_level_table[8] * phi_normal2 * view_theta +
+                               coeff_level_table[9] * theta_reflection2 * view_theta + coeff_level_table[
+                                   10] * phi_reflection2 * view_theta +
+                               coeff_level_table[11] * theta_normal2 * view_theta2 + coeff_level_table[
+                                   12] * phi_normal2 * view_theta2 +
+                               coeff_level_table[13] * theta_reflection2 * view_theta2 + coeff_level_table[
+                                   14] * phi_reflection2 * view_theta2)
+                sample_weight = (coeff_weight_table[0] + coeff_weight_table[1] * theta_normal2 + coeff_weight_table[
+                    2] * phi_normal2 +
+                                coeff_weight_table[3] * theta_reflection2 + coeff_weight_table[4] + phi_reflection2 +
+                                coeff_weight_table[
+                                    5] * view_theta2 + coeff_weight_table[6] * view_theta + coeff_weight_table[
+                                    7] * theta_normal2 * view_theta + coeff_weight_table[8] * phi_normal2 * view_theta +
+                                coeff_weight_table[9] * theta_reflection2 * view_theta + coeff_weight_table[
+                                    10] * phi_reflection2 * view_theta +
+                                coeff_weight_table[11] * theta_normal2 * view_theta2 + coeff_weight_table[
+                                    12] * phi_normal2 * view_theta2 +
+                                coeff_weight_table[13] * theta_reflection2 * view_theta2 + coeff_weight_table[
+                                    14] * phi_reflection2 * view_theta2)
             else:
                 raise NotImplementedError
 
@@ -873,13 +925,21 @@ def compare_view_dependent_ggx_kernel(constant,adjust_level,ggx_alpha,n_sample_p
                                                                     view_direction.reshape((1, 3)))
 
 
-        print("Test view_theta:{:.4f}pi".format(np.arccos(view_direction_tmp[0,2].item()) / np.pi ))
+        #print("Test view_theta:{:.4f}pi".format(np.arccos(view_direction_tmp[0,2].item()) / np.pi ))
 
         reflected_direction = reflected_direction.cpu().detach().numpy().flatten()
         view_direction = view_direction.cpu().detach().numpy()
         file_name = "08-21_Swiss_A.hdr"
         #mipmap_l0 = image_read.envmap_to_cubemap('exr_files/' + file_name, 128)
         mipmap_l0 = np.load("exr_files/" + file_name[:-4] + "128.npy")
+
+
+        result = reference.compute_reference_view_dependent(mipmap_l0,128, res, info[level_to_test].roughness, view_direction)
+        save_name = "./view_dependent_test/" + "integral_{:.3f}_{:.4f}_{:.4f}_{:.4f}".format(ggx_alpha,view_direction[0, 0], view_direction[0, 1],
+                                                                            view_direction[0, 2]) + ".exr"
+        image_read.gen_cubemap_preview_image(result, res, filename=save_name)
+
+
 
         is_result = reference.compute_is_view_dependent_filtered_result(mipmap_l0,128,res,
                                                                         info[level_to_test].roughness,96,view_direction)
@@ -896,10 +956,7 @@ def compare_view_dependent_ggx_kernel(constant,adjust_level,ggx_alpha,n_sample_p
 
 
 
-        result = reference.compute_reference_view_dependent(mipmap_l0,128, res, info[3].roughness, view_direction)
-        save_name = "./view_dependent_test/" + "integral_{:.3f}_{:.4f}_{:.4f}_{:.4f}".format(ggx_alpha,view_direction[0, 0], view_direction[0, 1],
-                                                                            view_direction[0, 2]) + ".exr"
-        image_read.gen_cubemap_preview_image(result, res, filename=save_name)
+
 
 
 
@@ -1101,12 +1158,12 @@ if __name__ == '__main__':
 
     level = 2
 
-    test_option = 1
+    test_option = 0
     if test_option == 0:
         visualize_view_dependent_filter_sample_directions(constant=False, adjust_level=True,
-                                                          ggx_alpha=info[3].roughness, n_sample_per_frame=96,
-                                                          level_to_test=3
-                                                          , n_multi_loc=300, optimize_str="bfgs", random_shuffle=True,
+                                                          ggx_alpha=info[level].roughness, n_sample_per_frame=96,
+                                                          level_to_test=level
+                                                          , n_multi_loc=300, optimize_str="adam", random_shuffle=True,
                                                           allow_neg_weight=True,
                                                           ggx_ref_jac_weight='light',
                                                           view_option_str="relative_frame_full_interaction",
@@ -1114,10 +1171,10 @@ if __name__ == '__main__':
     elif test_option == 1:
         compare_view_dependent_ggx_kernel(constant=False, adjust_level=True, ggx_alpha=info[level].roughness,
                                           n_sample_per_frame=96, level_to_test=level
-                                          , n_multi_loc=300, optimize_str="bfgs", random_shuffle=True,
+                                          , n_multi_loc=300, optimize_str="adam", random_shuffle=True,
                                           allow_neg_weight=True,
                                           ggx_ref_jac_weight='light', view_option_str="relative_frame_full_interaction",
-                                          view_reflection_parameterization=False, clip_ndf=True, synthetic=True, use_vndf=False, clip_when_fetching=True)
+                                          view_reflection_parameterization=False, clip_ndf=True, synthetic=False, use_vndf=False, clip_when_fetching=True)
     elif test_option == 2:
         compare_view_independent_ggx_kernel(constant=False, adjust_level=True, ggx_alpha=info[level].roughness,
                                             n_sample_per_frame=32, level_to_test=level
@@ -1125,6 +1182,13 @@ if __name__ == '__main__':
                                             allow_neg_weight=True,
                                             ggx_ref_jac_weight='light', view_option_str="None",
                                             view_reflection_parameterization=False, clip_ndf=False, synthetic=False)
+    elif test_option == 3:
+        genarate_model_filtered_images(constant=False, adjust_level=True, ggx_alpha=info[level].roughness,
+                                          n_sample_per_frame=96, level_to_test=level
+                                          , n_multi_loc=300, optimize_str="adam", random_shuffle=True,
+                                          allow_neg_weight=True,
+                                          ggx_ref_jac_weight='light', view_option_str="relative_frame_full_interaction",
+                                          view_reflection_parameterization=False, clip_ndf=True, synthetic=False, use_vndf=False, clip_when_fetching=False)
 
 
 

@@ -1150,7 +1150,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     :return:
     """
 
-    visualize_loss = False
+    visualize_loss = True
 
     device = get_device()
 
@@ -1189,8 +1189,8 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
 
     else:
         rng = torch.Generator(device=device)
-        rng.seed()
-        #rng.manual_seed(12345)
+        #rng.seed()
+        rng.manual_seed(145178821)
         if view_dependent:
             view_dirs, view_theta, all_locations_cube, all_locations = torch_util.sample_view_dependent_location(n_sample_per_level,
                                                                                                      rng, no_parallel= True)
@@ -1363,7 +1363,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                                     view_reflection_parameterization,device,all_locations)
                     ref_param = (ggx_alpha, all_locations,tex_directions_res, tex_directions_res_map,
                                                 view_dirs, ggx_ref_jac_weight, view_ndf_clipping)
-                    visualize_high_loss_view_dependent(push_back_param,ref_param,0.8, view_theta)
+                    visualize_high_loss_view_dependent(push_back_param,ref_param,0.4, view_theta)
 
 
             tmp_pushed_back_sum = torch.sum(tmp_pushed_back_result, dim=[1, 2, 3, 4], keepdim=True)

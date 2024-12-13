@@ -133,7 +133,7 @@ def loop_compute_view_dependent(normal_direction,normalized_xyz_input,j_weighted
     ndf = np.where(NdotL > 0.0, ndf, 0.0)
 
     VdotH = np.dot(half_vector, view_direction)
-
+    VdotH = np.where(VdotH > 1e-6, VdotH, 1e-6)
     multiplier = ndf * NdotH / (4 * VdotH)
 
     integral_sum = np.stack((multiplier, multiplier, multiplier), axis=-1) * j_weighted_input

@@ -127,6 +127,15 @@ def process_cmd():
         help='Whether to use vndf in view dependent reference.'
     )
 
+    parser.add_argument(
+        '--fixed-costheta-res',type=int
+        ,default = -1, help='resolution of fixed cos theta(default -1)\nif negative, no fixed cos theta optimization'
+    )
+
+    parser.add_argument(
+        '--fixed-costheta-idx',type=int,default=-1,help='only valid when fixed-costheta-res is larger than 0'
+    )
+
 
     args = parser.parse_args()
 
@@ -147,10 +156,21 @@ def process_cmd():
     view_ndf_cliping = args.view_ndf_clipping
     use_vndf = args.use_vndf
 
+    fixed_costheta_res = args.fixed_costheta_res
+    fixed_costheta_idx = args.fixed_costheta_idx
+
     if ggx_alpha_input is not None and ggx_level is not None:
         raise ValueError('ggx_alpha and ggx_level cannot be both specified.')
 
-    return n_sample_per_frame,ndir, ggx_level if ggx_level is not None else ggx_alpha_input, constant, adjust_level, optimizer, random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr, view_option, view_reflection_parameterization, view_ndf_cliping, use_vndf
+
+
+    if view_option == "None":
+        if fixed_costheta_res >= 0 or fixed_costheta_idx >= 0:
+            raise NotImplementedError
+    else:
+        fixed_costheta_info = (fixed_costheta_res,fixed_costheta_idx)
+
+    return n_sample_per_frame,ndir, ggx_level if ggx_level is not None else ggx_alpha_input, constant, adjust_level, optimizer, random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr, view_option, view_reflection_parameterization, view_ndf_cliping, use_vndf, fixed_costheta_info
 
 
 
@@ -1142,13 +1162,15 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                                 vectorize = True, optimizer_type = "adam", random_shuffle = False, allow_neg_weight = False,
                                 ggx_ref_jac_weight = 'None', learning_rate = 1e-4, view_option_str = "None"
                                 ,view_reflection_parameterization = False, view_ndf_clipping = False
-                                ,use_vndf = False):
+                                ,use_vndf = False, fixed_cos_view_theta = None):
     """
     To speed up, a lot of things can be precomputed, including the relative XYZ,the frame weight_g
     we don't have to compute this in every iteration
     :param n_sample_per_level:
     :return:
     """
+    visualize_loss = False
+
     device = get_device()
 
     view_dependent, view_option_str = process_view_option(view_option_str, view_reflection_parameterization)
@@ -1162,8 +1184,33 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                                      ggx_ref_jac_weight=ggx_ref_jac_weight,
                                      view_dependent=view_dependent, view_option_str=view_option_str
                                      ,reflection_parameterization=view_reflection_parameterization,
-                                     view_ndf_clipping=view_ndf_clipping, use_vndf=use_vndf)
-    log_name = "./logs/" + log_name
+                                     view_ndf_clipping=view_ndf_clipping, use_vndf=use_vndf, fixed_cos_view_theta=fixed_cos_view_theta.item())
+
+    if fixed_cos_view_theta is not None:
+        fixed_cos_dir_name = map_util.fixed_view_diretory_name(
+            ggx_alpha, n_sample_per_frame, n_sample_per_level, constant, adjust_level, optimizer_type,
+            random_shuffle=random_shuffle, allow_neg_weight=allow_neg_weight,
+            ggx_ref_jac_weight=ggx_ref_jac_weight,
+            view_dependent=view_dependent, view_option_str=view_option_str
+            , reflection_parameterization=view_reflection_parameterization,
+            view_ndf_clipping=view_ndf_clipping, use_vndf=use_vndf, fixed_cos_view_theta=fixed_cos_view_theta.item(),
+            fixed_cos_view_theta_res=fixed_costheta_res_g
+        )
+        fixed_cos_dir_name = fixed_cos_dir_name + "/"
+
+        #test if directory exist
+        if not os.path.exists("./logs/" + fixed_cos_dir_name):
+            os.mkdir("./logs/" + fixed_cos_dir_name)
+        if not os.path.exists("./model/" + fixed_cos_dir_name):
+            os.mkdir("./model/" + fixed_cos_dir_name)
+
+    else:
+        fixed_cos_dir_name = ""
+
+    if fixed_cos_view_theta is not None:
+        log_name = "./logs/"+ fixed_cos_dir_name + log_name
+    else:
+        log_name = "./logs/"+ log_name
 
     logging.basicConfig(filename=log_name, filemode='a', level=logging.INFO,
                         format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s', datefmt='%H:%M:%S')
@@ -1175,9 +1222,13 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                                          optimizer_type, allow_neg_weight=allow_neg_weight,
                                          ggx_ref_jac_weight=ggx_ref_jac_weight, view_dependent=view_dependent,view_option_str=view_option_str
                                          ,reflection_parameterization=view_reflection_parameterization,
-                                         view_ndf_clipping=view_ndf_clipping, use_vndf=use_vndf)
+                                         view_ndf_clipping=view_ndf_clipping, use_vndf=use_vndf, fixed_cos_view_theta=fixed_cos_view_theta.item())
         if view_dependent:
-            view_dirs, view_theta, all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level, torch.manual_seed(rng.integers(low=1,high=425124123)), no_parallel= True)
+            if fixed_cos_view_theta is None:
+                view_dirs, view_theta, all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level, torch.manual_seed(rng.integers(low=1,high=425124123)), no_parallel= True)
+            else:
+                view_dirs, view_theta, all_locations_cube, all_locations = torch_util.sample_view_dependent_location_fixed_view_theta(
+                    n_sample_per_level, torch.manual_seed(rng.integers(low=1, high=425124123)), no_parallel=True,fixed_cos_view_theta=fixed_cos_view_theta)
             torch.save(torch.concatenate(view_dirs,all_locations_cube),dir_name)
         else:
             all_locations = map_util.sample_location(n_sample_per_level,rng)
@@ -1189,8 +1240,12 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
         rng.seed()
         #rng.manual_seed(12345)
         if view_dependent:
-            view_dirs, view_theta, all_locations_cube, all_locations = torch_util.sample_view_dependent_location(n_sample_per_level,
-                                                                                                     rng, no_parallel= True)
+            if fixed_cos_view_theta is None:
+                view_dirs, view_theta, all_locations_cube, all_locations = torch_util.sample_view_dependent_location(n_sample_per_level,
+                                                                                                         rng, no_parallel= True)
+            else:
+                view_dirs, view_theta, all_locations_cube, all_locations = torch_util.sample_view_dependent_location_fixed_view_theta(n_sample_per_level,
+                                                                                                         rng, no_parallel= False,fixed_cos_view_theta=fixed_cos_view_theta)
         else:
             all_locations_cube,all_locations = torch_util.sample_location(n_sample_per_level,rng)
 
@@ -1200,7 +1255,12 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                                          ggx_ref_jac_weight=ggx_ref_jac_weight,
                                          view_dependent=view_dependent, view_option_str=view_option_str,
                                          reflection_parameterization=view_reflection_parameterization,
-                                         view_ndf_clipping=view_ndf_clipping,use_vndf=use_vndf)
+                                         view_ndf_clipping=view_ndf_clipping,use_vndf=use_vndf, fixed_cos_view_theta=fixed_cos_view_theta.item())
+
+
+    if fixed_cos_view_theta is not None:
+        model_name = fixed_cos_dir_name + model_name
+
 
 
     if view_dependent:
@@ -1286,7 +1346,14 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
             if not view_dependent:
                 all_locations_cube,all_locations =  torch_util.sample_location(n_sample_per_level,rng)
             else:
-                view_dirs,view_theta,all_locations_cube,all_locations = torch_util.sample_view_dependent_location(n_sample_per_level, rng, no_parallel=True, cos_theta_max=0.1)
+                if fixed_cos_view_theta is None:
+                    view_dirs, view_theta, all_locations_cube, all_locations = torch_util.sample_view_dependent_location(
+                        n_sample_per_level,
+                        rng, no_parallel=True)
+                else:
+                    view_dirs, view_theta, all_locations_cube, all_locations = torch_util.sample_view_dependent_location_fixed_view_theta(
+                        n_sample_per_level,
+                        rng, no_parallel=False, fixed_cos_view_theta=fixed_cos_view_theta)
             #new parameter
 
             #new reference
@@ -1988,7 +2055,7 @@ if __name__ == "__main__":
 
     (n_sample_per_frame_g,n_sample_per_level_g, ggx_info, flag_constant, flag_adjust_level, optimizer_string,
      random_shuffle, allow_neg_weight, ggx_ref_jac_weight, lr,
-     view_option, view_reflection_parameterization_g , view_ndf_clipping_g, use_vndf_g)=  process_cmd()
+     view_option, view_reflection_parameterization_g , view_ndf_clipping_g, use_vndf_g, fixed_costheta_info)=  process_cmd()
     #
     if isinstance(ggx_info, int):
         import specular
@@ -1996,6 +2063,14 @@ if __name__ == "__main__":
         ggx_alpha = info[ggx_info].roughness
     else:
         ggx_alpha = ggx_info
+
+    fixed_costheta_res_g, fixed_costheta_idx_g = fixed_costheta_info
+    if fixed_costheta_res_g > 0:
+        costheta_list = torch_util.gen_cos_theta_list(fixed_costheta_res_g)
+        fixed_costheta = costheta_list[fixed_costheta_idx_g]
+    else:
+        fixed_costheta = None
+
     print("Computing GGX alpha {}, using {} directions,{} samples per frame.\n"
           "Adjust Level with Jacobian:{}\n"
           "Using constant params:{}\n"
@@ -2006,7 +2081,11 @@ if __name__ == "__main__":
           "View dependency Option:{}\n"
           "Parameterize using reflected direction:{}\n"
           "Clipping below horizong ndf:{}\n"
-          "Use VNDF as reference:{}".format(ggx_alpha,n_sample_per_level_g,n_sample_per_frame_g,flag_adjust_level,flag_constant,optimizer_string,lr,random_shuffle,allow_neg_weight, ggx_ref_jac_weight,view_option,view_reflection_parameterization_g,view_ndf_clipping_g,use_vndf_g))
+          "Use VNDF as reference:{}\n"
+          "fixed cos theta:{}".format(ggx_alpha,n_sample_per_level_g,n_sample_per_frame_g,flag_adjust_level,
+                                      flag_constant,optimizer_string,lr,random_shuffle,allow_neg_weight,
+                                      ggx_ref_jac_weight,view_option,view_reflection_parameterization_g,
+                                      view_ndf_clipping_g,use_vndf_g, fixed_costheta))
 
     # #test_vectorized_multiple_opt(ggx_alpha)
     #
@@ -2024,7 +2103,7 @@ if __name__ == "__main__":
                                 vectorize=True, optimizer_type=optimizer_string, random_shuffle=random_shuffle,
                                 allow_neg_weight=allow_neg_weight, ggx_ref_jac_weight=ggx_ref_jac_weight,
                                 view_option_str=view_option ,learning_rate=lr,view_reflection_parameterization=view_reflection_parameterization_g,
-                                view_ndf_clipping=view_ndf_clipping_g, use_vndf = use_vndf_g)
+                                view_ndf_clipping=view_ndf_clipping_g, use_vndf = use_vndf_g, fixed_cos_view_theta=fixed_costheta)
     #optimize_function()
 
     # dummy location

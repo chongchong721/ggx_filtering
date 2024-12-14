@@ -1322,7 +1322,7 @@ def sample_uniform_hemisphere(uv):
 
 
 
-def sample_directions_over_hemispheres(normals, uv, no_parallel = False, cos_theta_max = 1.0):
+def sample_directions_over_hemispheres(normals, uv, no_parallel = False, cos_theta_max = 1.0, fixed_theta = None):
     N = normals.shape[0]
 
     # Sample directions on the canonical hemisphere
@@ -1376,6 +1376,53 @@ def sample_directions_over_hemispheres(normals, uv, no_parallel = False, cos_the
     return rotated_dirs, torch.arccos(cos_theta)
 
 
+def gen_cos_theta_list(costheta_res, eps = 1e-3):
+    """
+    For v=n case, we use the previous method, here we only need v!=n case
+
+    cos_theta = 1.0 -> theta = 0 -> v = n case
+
+    :param costheta_res:
+    :param eps:
+    :return:
+    """
+    costheta_list = torch.linspace(0.0,1.0,costheta_res + 1, device=device)
+    costheta_list[0] = costheta_list[0] + eps
+    return costheta_list[:-1]
+
+
+
+def sample_view_dependent_location_fixed_view_theta(n_sample_per_level, g = None, no_parallel = False, fixed_cos_view_theta = 1.0, cos_theta_max = 1.0):
+    """
+    Since cos theta is fixed, no need to check parallel/cos_theta_max
+    :param n_sample_per_level:
+    :param g:
+    :param no_parallel:
+    :param fixed_cos_view_theta:
+    :param cos_theta_max:
+    :return:
+    """
+    if g is None:
+        g = torch.Generator()
+    uv = torch.rand((n_sample_per_level, 2), generator=g, device=device)
+    xyz = random_dir_sphere(uv, n_sample_per_level)
+    xyz_cube = dir_to_cube_coordinate(xyz)
+
+    """
+        A valid view direction should be in the hemisphere where xyz is the normal
+        We do not sample invalid direction since there is no meaning to optimize something that will always be zero
+        """
+
+    uv = torch.rand((n_sample_per_level, 2), generator=g, device=device)
+
+    #v, which is uv[:,1] is used to sample costheta
+    #We can simply set v to the cos theta we want
+    uv[:,1] = fixed_cos_view_theta
+
+    view_direction, view_theta = sample_directions_over_hemispheres(xyz, uv, no_parallel=no_parallel,
+                                                                    cos_theta_max=cos_theta_max)
+
+    return (view_direction, view_theta, xyz_cube, xyz)
 
 
 

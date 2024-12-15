@@ -74,3 +74,8 @@ target_link_libraries(gl_test ${XRANDR_LIBRARIES})
 target_link_libraries(gl_test ${XI_LIBRARIES})
 target_link_libraries(gl_test Threads::Threads)
 target_link_libraries(gl_test ${CMAKE_DL_LIBS})
+
+add_compile_definitions(DJ_BRDF_IMPLEMENTATION)
+add_executable(dj_brdf_test powit_test/dj_brdf.h
+        powit_test/powit.cpp)
+target_include_directories(dj_brdf_test PUBLIC ../extern/pybind11/include)

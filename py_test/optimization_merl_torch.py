@@ -220,14 +220,6 @@ def optimize_multiple_locations_merl(merl_material_name,n_sample_per_level, cons
             ref_list = ref_list / torch.sum(ref_list,dim=(1,2,3,4),keepdim=True)
 
 
-            #print a reference for testing
-            test_img = ref_list[0]
-            test_img = test_img.repeat(1,1,1,3)
-
-            image_read.gen_cubemap_preview_image(test_img.detach().numpy(),128,filename="./test_merl_ref.exr")
-
-
-
             # ref_list_test = compute_ggx_distribution_reference_torch_vectorized(128, ggx_alpha, all_locations,
             #                                                                tex_directions_res, tex_directions_res_map,
             #                                                                False)

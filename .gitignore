@@ -3,3 +3,7 @@ untitled.blend
 /py_test/*.exr
 /py_test/exr_files/*
 /py_test/*.jpg
+/py_test/logs/*
+/py_test/model/*
+/py_test/logs_merl/*
+/py_test/model_merl/*

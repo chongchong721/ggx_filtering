@@ -10,7 +10,7 @@
 #include <random>
 #include <map>
 
-#include "compute_shader.h"
+#include "shader.h"
 
 struct SampleInfo {
     glm::vec3 direction;
@@ -300,7 +300,7 @@ int main() {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER,4,ssbo_dbg);
 
 
-        compute_shader my_shader("/home/yuan/school/ggx_filtering/cpp_test/bilinear_sample_process.glsl");
+        shader my_shader("/home/yuan/school/ggx_filtering/cpp_test/bilinear_sample_process.glsl");
         my_shader.use();
         glDispatchCompute(1,1,1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
@@ -376,7 +376,7 @@ int main() {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER,4,ssbo_dbg);
 
 
-        compute_shader push_back_shader("/home/yuan/school/ggx_filtering/cpp_test/push_back.glsl");
+        shader push_back_shader("/home/yuan/school/ggx_filtering/cpp_test/push_back.glsl");
         push_back_shader.use();
 
         int level = 1;

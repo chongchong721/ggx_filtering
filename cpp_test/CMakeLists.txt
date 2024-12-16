@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 project(TEST VERSION 1.0)
 
+set(CMAKE_CXX_STANDARD 11)
+
 #opencv setting
 set(CMAKE_PREFIX_PATH "/home/yuan/software/opencv_source/build" ${CMAKE_PREFIX_PATH})
 find_package( OpenCV REQUIRED)
@@ -64,8 +66,8 @@ include_directories(${OPENGL_INCLUDE_DIRS} ${GLEW_IUCLUDE_DIRS} ${GLFW_INCLUDE_D
 
 
 add_executable(gl_test gl_test.cpp
-        compute_shader.cpp
-        compute_shader.h)
+        shader.cpp
+        include/shader.h)
 target_link_libraries(gl_test OpenGL::GL)
 target_link_libraries(gl_test ${GLFW_LIBRARIES})
 target_link_libraries(gl_test ${GLEW_LIBRARIES})
@@ -75,7 +77,32 @@ target_link_libraries(gl_test ${XI_LIBRARIES})
 target_link_libraries(gl_test Threads::Threads)
 target_link_libraries(gl_test ${CMAKE_DL_LIBS})
 
+
+
+add_executable(render_test
+        render_test.cpp shader.cpp include/shader.h
+        include/camera.h include/stb_image.h)
+
+target_include_directories(render_test PUBLIC include/)
+
+target_link_libraries(render_test OpenGL::GL)
+target_link_libraries(render_test ${GLFW_LIBRARIES})
+target_link_libraries(render_test ${GLEW_LIBRARIES})
+target_link_libraries(render_test ${X11_LIBRARIES})
+target_link_libraries(render_test ${XRANDR_LIBRARIES})
+target_link_libraries(render_test ${XI_LIBRARIES})
+target_link_libraries(render_test Threads::Threads)
+target_link_libraries(render_test ${CMAKE_DL_LIBS})
+
+
+
+
+
+
+
+
 add_compile_definitions(DJ_BRDF_IMPLEMENTATION)
 add_executable(dj_brdf_test powit_test/dj_brdf.h
-        powit_test/powit.cpp)
+        powit_test/powit.cpp
+        powit_test/MerlBRDF.h)
 target_include_directories(dj_brdf_test PUBLIC ../extern/pybind11/include)

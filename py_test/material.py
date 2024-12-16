@@ -736,7 +736,7 @@ class powit_merl_ndf:
     #Not that, merl_ndf has a non-uniform resolution of 128
     # theta is parameterized
 
-    def __init__(self, fielname, res = 128, profile =2):
+    def __init__(self, fielname, res = 128):
         """
 
         :param fielname:
@@ -745,7 +745,7 @@ class powit_merl_ndf:
         """
         self.torch_device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-        self.merl_tabular = powit.isotropic_merl_ndf(fielname, res, profile)
+        self.merl_tabular = powit.isotropic_merl_ndf(fielname, res)
 
         tmp_u = np.linspace(0, 1, res)
 
@@ -784,6 +784,9 @@ class powit_merl_ndf:
         ndf = ndf_flat.view(original_shape)
 
         return ndf
+
+    def get_fitted_alpha(self):
+        return self.merl_tabular.get_fitted_alpha()
 
 
 
@@ -1142,6 +1145,76 @@ def normalize_slope_p(p, N):
 
 
 
+def generate_all_merl_alpha():
+    import os
+    full_merl_directory = '/home/yuan/school/graphics/BRDFDatabase/brdfs/'
+    for root, dirs, files in os.walk(full_merl_directory):
+        print("Root:", root)
+        print("Directories:", dirs)
+        print("Files:", files)
+        break
+
+    dict_alpha = {}
+
+    for file in files:
+        if file[-7:] == '.binary':
+            brdf_name = full_merl_directory + file
+            tmp = powit_merl_ndf(brdf_name)
+            dict_alpha[file[:-7]] = tmp.get_fitted_alpha()
+
+    def write_dict_to_txt(dictionary, filename, delimiter=' '):
+        """
+        Writes a dictionary to a plain text file with each key-value pair on a separate line.
+
+        Parameters:
+        - dictionary (dict): The dictionary to write. Keys should be strings, and values should be floats.
+        - filename (str): The path to the file where the dictionary will be saved.
+        - delimiter (str): The string used to separate keys and values. Default is a space.
+        """
+        try:
+            with open(filename, 'w') as file:
+                for key, value in dictionary.items():
+                    file.write(f"{key}{delimiter}{value}\n")
+            print(f"Dictionary successfully saved to '{filename}'.")
+        except IOError as e:
+            print(f"An error occurred while writing to the file: {e}")
+
+
+    def read_txt_to_dict(filename, delimiter=' '):
+        """
+        Reads a plain text file and converts it back into a dictionary.
+
+        Parameters:
+        - filename (str): The path to the file to read.
+        - delimiter (str): The string used to separate keys and values. Must match the delimiter used during writing.
+
+        Returns:
+        - dict: The reconstructed dictionary.
+        """
+        reconstructed_dict = {}
+        try:
+            with open(filename, 'r') as file:
+                for line in file:
+                    key, value = line.strip().split(delimiter)
+                    reconstructed_dict[key] = float(value)  # Convert value back to float
+            print(f"Dictionary successfully loaded from '{filename}'.")
+        except IOError as e:
+            print(f"An error occurred while reading the file: {e}")
+        except ValueError as ve:
+            print(f"Value conversion error: {ve}")
+        return reconstructed_dict
+
+    # Sorting the Dictionary by Values (Low to High)
+    sorted_dict_alpha = dict(sorted(dict_alpha.items(), key=lambda item: item[1]))
+
+
+    write_dict_to_txt(sorted_dict_alpha, 'brdf_fitted_alpha.txt', delimiter=':')
+
+
+
+
+
+
 
 def merl_test():
     test_merl_material = MERL_MAT("../merl_database/alum-bronze.binary")
@@ -1158,5 +1231,6 @@ def powit_test():
     test_powit_tab.get_ndf_torch(cos_theta)
 
 if __name__ == "__main__":
+    generate_all_merl_alpha()
     powit_test()
     merl_test()

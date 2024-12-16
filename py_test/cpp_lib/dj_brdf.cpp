@@ -15,6 +15,10 @@ by Jonathan Dupuy
 
 */
 
+
+#define DJ_BRDF_IMPLEMENTATION 1
+
+
 /*
 TODO
  - implement sampling of visible normals

@@ -384,15 +384,15 @@ def jacobian_vertorized(xyz):
     if xyz.ndim == 2:
         power_2 = xyz * xyz
         sum_xyz = np.sum(power_2, axis=1)
-        j = 1 / np.pow(sum_xyz,3/2)
+        j = 1 / np.power(sum_xyz,3/2)
     elif xyz.ndim == 3:
         power_2 = xyz * xyz
         sum_xyz = np.sum(power_2, axis=2)
-        j = 1 / np.pow(sum_xyz,3/2)
+        j = 1 / np.power(sum_xyz,3/2)
     elif xyz.ndim == 4:
         power_2 = xyz * xyz
         sum_xyz = np.sum(power_2, axis=3)
-        j = 1 / np.pow(sum_xyz,3/2)
+        j = 1 / np.power(sum_xyz,3/2)
     else:
         raise NotImplementedError
 
@@ -401,7 +401,7 @@ def jacobian_vertorized(xyz):
 
 def jacobian(xyz):
     x,y,z = xyz[0],xyz[1],xyz[2]
-    return 1 / np.pow((x**2+y**2+z**2),3/2)
+    return 1 / np.power((x**2+y**2+z**2),3/2)
 
 
 
@@ -740,6 +740,65 @@ def fixed_view_diretory_name(ggx_alpha, n_sample_per_frame ,n_sample_per_level,c
         return fixed_view_dir_name
     else:
         raise NotImplementedError
+
+
+
+def log_merl_filename(merl_name, n_sample_per_frame, n_sample_per_level, constant, adjust_level, optim_method:str,
+                      random_shuffle = False, allow_neg_weight = False, ref_jac_weight ='None', ndf_clipping = False):
+    name = 'optim_info_merl_' + merl_name + "_" + str(n_sample_per_level)
+
+    if constant:
+        name = name + "_constant" + str(n_sample_per_frame)
+    else:
+        name = name + "_quad" + str(n_sample_per_frame)
+
+    if ndf_clipping:
+        name = name + "_ndfclip"
+
+    if adjust_level:
+        name = name + "_ladj"
+
+    name = name + "_" + optim_method
+
+    if random_shuffle:
+        name = name + "_randomdir"
+
+    if allow_neg_weight:
+        name = name + "_negweight"
+
+    if ref_jac_weight.lower() != 'none':
+        name = name + "_jacref" + ref_jac_weight.lower()
+
+    name = name + '.log'
+
+    return name
+
+
+def model_merl_filename(merl_name, n_sample_per_frame, n_sample_per_level, constant, adjust_level, optim_method: str,
+                        random_shuffle=False, allow_neg_weight=False, ref_jac_weight='None', ndf_clipping=False):
+    if constant:
+        model_name = "constant"+ str(n_sample_per_frame)  + "_merl_" + merl_name + "_" + str(n_sample_per_level)
+    else:
+        model_name = "quad"+ str(n_sample_per_frame)  + "_merl_" + merl_name + "_" + str(n_sample_per_level)
+
+    if ndf_clipping:
+        model_name = model_name + "_ndfclip"
+
+    if adjust_level:
+        model_name = model_name + "_ladj"
+
+    model_name = model_name + "_" + optim_method
+
+    if random_shuffle:
+        model_name = model_name + "_randomdir"
+
+    if allow_neg_weight:
+        model_name = model_name + "_negweight"
+
+    if ref_jac_weight.lower() != 'none':
+        model_name = model_name + "_jacref" + ref_jac_weight.lower()
+
+    return model_name
 
 
 

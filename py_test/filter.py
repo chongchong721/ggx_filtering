@@ -29,8 +29,8 @@ def gen_tex_levels(n_level,n_high_res):
         texture_list.append(tex)
         cur_res = n_high_res / 2
 
-
-
+def fetch_sample_view_dependent_fixed_theta_python_table(tex_input,output_level,coeff_table,n_sample_per_frame, costhete_res, cos_theta_list ,follow_code=False):
+    pass
 
 def fetch_sample_view_dependent_python_table(tex_input,output_level, coeff_table, n_sample_per_frame ,follow_code = False, constant = True, j_adjust = True, allow_neg_weight = False, view_option_str="None",view_direction = np.array([1.0,0.0,0.0]), reflection_parameterization = False, clip_below_horizon = False):
     coefficient_table = coeff_table
@@ -484,7 +484,7 @@ def fetch_samples(tex_input,output_level, follow_code = False):
 
 
 def torch_model_to_coeff_table(constant:bool,ggx_alpha,n_sample_per_frame,n_multi_loc = None):
-    import optmization_torch
+    import optimization_ggx_torch
     import os
     import torch
 
@@ -866,7 +866,18 @@ def compare_view_dependent_ggx_kernel(constant,adjust_level,ggx_alpha,n_sample_p
     g.manual_seed(1357987)
 
     normal_direction = random_dir_sphere(torch.rand((1,2),generator=g),1)
-    view_direction_tmp = random_dir_hemisphere(torch.rand((1,2),generator=g),1)
+
+    face_uv,face_idx = map_util.xyz_to_uv(normal_direction.flatten())
+
+
+    uv = torch.rand((1,2),generator=g)
+
+    view_direction_tmp = random_dir_hemisphere(uv,1)
+
+    # view_dir with different phi
+    uv[:,0] = torch.rand(1,generator=g)
+    view_direction_tmp2 = random_dir_hemisphere(uv,1)
+
 
     up_vector = torch.Tensor([1.0,0.0,0.0])
     if torch.sum(up_vector * normal_direction) > 0.9:
@@ -877,6 +888,8 @@ def compare_view_dependent_ggx_kernel(constant,adjust_level,ggx_alpha,n_sample_p
 
     view_direction = X * view_direction_tmp[0][0] + Y * view_direction_tmp[0][1] + normal_direction * view_direction_tmp[0][2]
 
+    view_direction_other = X * view_direction_tmp2[0][0] + Y * view_direction_tmp2[0][1] + normal_direction * view_direction_tmp2[0][2]
+    #view_direction = view_direction_other
 
     # #test
     # normal_direction = torch.Tensor([[1.0,0.2,0.1]])
@@ -930,11 +943,12 @@ def compare_view_dependent_ggx_kernel(constant,adjust_level,ggx_alpha,n_sample_p
         reflected_direction = reflected_direction.cpu().detach().numpy().flatten()
         view_direction = view_direction.cpu().detach().numpy()
         file_name = "08-21_Swiss_A.hdr"
-        #mipmap_l0 = image_read.envmap_to_cubemap('exr_files/' + file_name, 128)
+        original_map_res = 128
+        #mipmap_l0 = image_read.envmap_to_cubemap('exr_files/' + file_name, original_map_res)
         mipmap_l0 = np.load("exr_files/" + file_name[:-4] + "128.npy")
 
 
-        result = reference.compute_reference_view_dependent(mipmap_l0,128, res, info[level_to_test].roughness, view_direction)
+        result = reference.compute_reference_view_dependent(mipmap_l0,original_map_res, res, info[level_to_test].roughness, view_direction)
         save_name = "./view_dependent_test/" + "integral_{:.3f}_{:.4f}_{:.4f}_{:.4f}".format(ggx_alpha,view_direction[0, 0], view_direction[0, 1],
                                                                             view_direction[0, 2]) + ".exr"
         image_read.gen_cubemap_preview_image(result, res, filename=save_name)
@@ -1158,7 +1172,7 @@ if __name__ == '__main__':
 
     level = 2
 
-    test_option = 0
+    test_option = 1
     if test_option == 0:
         visualize_view_dependent_filter_sample_directions(constant=False, adjust_level=True,
                                                           ggx_alpha=info[level].roughness, n_sample_per_frame=96,

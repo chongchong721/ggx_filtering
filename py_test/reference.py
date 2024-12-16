@@ -54,7 +54,7 @@ def test(res):
 #@numba.jit(nopython=True)
 def ndf_isotropic(a,cos_theta):
     a_pow_of2 = a ** 2
-    ndf = a_pow_of2 / (np.pi * np.pow(cos_theta * cos_theta * (a_pow_of2 - 1) + 1, 2))
+    ndf = a_pow_of2 / (np.pi * np.power(cos_theta * cos_theta * (a_pow_of2 - 1) + 1, 2))
     ndf = np.where(cos_theta > 0.0, ndf, 0.0)
     return ndf
 
@@ -700,7 +700,40 @@ def compute_ggx_ndf_ref_view_dependent_torch_vectorized(ggx_alpha, normal_direct
     return ndf
 
 
+def compute_merl_ndf_reference_half_vector_torch_vectorized(res, merl_ndf: material.powit_merl_ndf, normal_directions,
+                                                            directions, directions_map, apply_jacobian='None'):
+    """
 
+    :param res:
+    :param merl_ndf:
+    :param normal_direction:
+    :param directions:
+    :param directions_map:
+    :param apply_jacobian:
+    :return:
+    """
+    half_vec = torch_util.get_all_half_vector_torch_vectorized(normal_directions,directions)
+    NdotH = torch.einsum('bl,bijkl->bijk', normal_directions, half_vec).clamp(1e-4,1.0 - 1e-4)
+    #NdotH is cos theta_h
+
+    ndf = merl_ndf.get_ndf_torch(NdotH)
+
+    # we can ignore the factor of 1/4
+
+    if apply_jacobian.lower != 'none':
+        # which directions to use, half_vec or map direction? This will make huge difference when viewing angle close to grazing angle?
+        if apply_jacobian.lower() == 'half':
+            half_vec_map = half_vec / torch.max(torch.abs(half_vec), dim=-1, keepdim=True).values
+            j = torch_util.torch_jacobian_vertorized(half_vec_map)
+        elif apply_jacobian.lower() == 'light':
+            j = torch_util.torch_jacobian_vertorized(directions_map)
+        else:
+            raise NotImplementedError
+        ndf = ndf * j
+
+    ndf = ndf.reshape(ndf.shape + (1,))
+
+    return ndf
 
 def compute_ggx_ndf_reference_half_vector_torch_vectorized(res, ggx_alpha, normal_directions, directions, directions_map, apply_jacobian='None'):
     """

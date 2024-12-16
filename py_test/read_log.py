@@ -1,4 +1,4 @@
-from optmization_torch import process_cmd
+from optimization_ggx_torch import process_cmd
 from map_util import log_filename
 
 import numpy as np

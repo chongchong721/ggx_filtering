@@ -302,7 +302,7 @@ def ndf_isotropic_vectorized(alpha, cos_theta):
     :return:
     """
     a_pow_of2 = alpha ** 2
-    ndf = a_pow_of2 / (np.pi * np.pow(cos_theta * cos_theta * (a_pow_of2-1) + 1,2))
+    ndf = a_pow_of2 / (np.pi * np.power(cos_theta * cos_theta * (a_pow_of2-1) + 1,2))
     ndf = np.where(cos_theta > 0.0, ndf, 0.0)
     return ndf
 

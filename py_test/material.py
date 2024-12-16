@@ -12,6 +12,11 @@ import mat_util
 import time
 import sys
 
+import merl
+import powit
+
+import torch
+
 class Lambertian:
     albedo = 1.0
     albedo_rgb : np.ndarray
@@ -352,7 +357,7 @@ class GGX:
         assert self.ax == self.ay
         a = self.ax
         a_pow_of2 = a ** 2
-        ndf = a_pow_of2 / (np.pi * np.pow(cos_theta * cos_theta * (a_pow_of2-1) + 1,2))
+        ndf = a_pow_of2 / (np.pi * np.power(cos_theta * cos_theta * (a_pow_of2-1) + 1,2))
 
         ndf = np.where(cos_theta > 0.0, ndf, 0.0)
 
@@ -725,6 +730,171 @@ class VNDFSamplerGGX:
         return self.ggx.vndf(wi,wm)
 
 
+class powit_merl_ndf:
+    merl_tabular : powit.isotropic_merl_ndf
+
+    #Not that, merl_ndf has a non-uniform resolution of 128
+    # theta is parameterized
+
+    def __init__(self, fielname, res = 128, profile =2):
+        """
+
+        :param fielname:
+        :param res:
+        :param profile: 2 means smith model, do not change
+        """
+        self.torch_device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
+        self.merl_tabular = powit.isotropic_merl_ndf(fielname, res, profile)
+
+        tmp_u = np.linspace(0, 1, res)
+
+
+        self.merl_ndf_theta = tmp_u ** 2 * np.pi / 2
+        self.merl_ndf_theta_torch = torch.from_numpy(self.merl_ndf_theta).to(self.torch_device)
+
+        self.merl_ndf = np.array(self.merl_tabular.get_ndf())
+        self.merl_ndf_torch = torch.from_numpy(self.merl_ndf).to(self.torch_device)
+
+    def get_ndf_torch(self, cos_theta:torch.Tensor):
+        """
+        :param cos_theta:
+        :return:
+        """
+        theta_value = torch.arccos(cos_theta)
+
+        original_shape = theta_value.shape
+        theta_value_flat = theta_value.view(-1)
+
+        #all theta value should be within the range of 0,np.pi/2
+
+        theta_idx = torch.searchsorted(self.merl_ndf_theta_torch, theta_value_flat, right=True)
+
+        theta_0 = self.merl_ndf_theta_torch[theta_idx - 1]
+        theta_1 = self.merl_ndf_theta_torch[theta_idx]
+
+        f0 = self.merl_ndf_torch[theta_idx - 1]
+        f1 = self.merl_ndf_torch[theta_idx]
+
+
+        portion_to_theta0 = (theta_value_flat - theta_0) / (theta_1 - theta_0)
+
+        ndf_flat = f1 * portion_to_theta0 + f0 * (1 - portion_to_theta0)
+
+        ndf = ndf_flat.view(original_shape)
+
+        return ndf
+
+
+
+class  MERL_MAT:
+    """
+    The MERL material uses theta_h,d,phi_d parameterization used by original MERL paper,
+    I use a different one, will this cause problem?
+
+    MERL returns non-cos weighted BRDF
+    """
+    mat : merl.MERL_BRDF
+
+    def __init__(self,filename):
+        self.mat = merl.MERL_BRDF(filename)
+
+    # Create rotation matrices for rotations around x,y, and z axes.
+    def RxMatrix(self,theta):
+        return np.array([[1, 0, 0], [0, np.cos(theta), -np.sin(theta)], [0, np.sin(theta), np.cos(theta)]])
+
+    def RyMatrix(self,theta):
+        return np.array([[np.cos(theta), 0, np.sin(theta)], [0, 1, 0], [-np.sin(theta), 0, np.cos(theta)]])
+
+    def RzMatrix(self,theta):
+        return np.array([[np.cos(theta), -np.sin(theta), 0], [np.sin(theta), np.cos(theta), 0], [0, 0, 1]])
+
+    # Convert rus-coords to two direction vectors
+    # In:    Rusinkiewicz coordinates
+    # Out:   Tuple of direction vectors (omega_o,omega_i)
+    def RusinkToDirections(self, theta_h, theta_d, phi_d):
+        # Initially put Halfvector along Z axis
+        H = [0, 0, 1]
+        omega_o = [np.sin(theta_d), 0, np.cos(theta_d)]
+        omega_i = [-np.sin(theta_d), 0, np.cos(theta_d)]
+        # Rotate phiD-pi/2 around the z-axis
+        omega_o = np.dot(self.RzMatrix(phi_d - np.pi / 2), omega_o)
+        omega_i = np.dot(self.RzMatrix(phi_d - np.pi / 2), omega_i)
+        H = np.dot(self.RzMatrix(phi_d + np.pi / 2), H)
+        # Rotate thetaH around x-axis
+        omega_o = np.dot(self.RxMatrix(-theta_h), omega_o)
+        omega_i = np.dot(self.RxMatrix(-theta_h), omega_i)
+        H = np.dot(self.RxMatrix(-theta_h), H)
+        # Rotate around z-axis so omega_o aligns with x-axis
+        angl = -np.arccos(np.dot((1, 0, 0), self.normalize((omega_o[0], omega_o[1], 0)))) * np.sign(
+            omega_o[1])  ##-omega_o[1]
+        omega_o = np.dot(self.RzMatrix(angl), omega_o)
+        omega_i = np.dot(self.RzMatrix(angl), omega_i)
+        H = np.dot(self.RzMatrix(angl), H)
+
+        return (omega_o, omega_i)
+
+    def DirectionsToRusink(self,wi,wo):
+        a = np.reshape(self.normalize(wi), (-1, 3))
+        b = np.reshape(self.normalize(wo), (-1, 3))
+        H = self.normalize((a + b) / 2)
+        theta_h = np.arccos(H[:, 2])
+        phi_h = np.arctan2(H[:, 1], H[:, 0])
+        biNormal = np.array((0, 1, 0))
+        normal = np.array((0, 0, 1))
+        tmp = self.rotateVector(a, normal, -phi_h) # in or out? compare to cpp code
+        diff = self.rotateVector(tmp, biNormal, -theta_h)
+        diff = self.normalize(diff)
+        theta_d = np.arccos(diff[:, 2])
+        #phi_d = np.mod(np.arctan2(diff[:, 1], diff[:, 0]), np.pi)
+        phi_d = np.arctan2(diff[:, 1], diff[:, 0])
+        return np.column_stack((phi_d, theta_h, theta_d))
+
+    def normalize(self, v: np.ndarray):
+        return v / np.linalg.norm(v)
+
+    # Rotate vector around arbitrary axis
+    def rotateVector(self,vector, axis, angle):
+        cos_ang = np.reshape(np.cos(angle), (-1))
+        sin_ang = np.reshape(np.sin(angle), (-1))
+        vector = np.reshape(vector, (-1, 3))
+        axis = np.reshape(np.array(axis), (-1, 3))
+        return vector * cos_ang[:, np.newaxis] + axis * np.dot(vector, np.transpose(axis)) * (1 - cos_ang)[:,
+                                                                                             np.newaxis] + np.cross(
+            axis, vector) * sin_ang[:, np.newaxis]
+
+    def eval(self,wi,wo,wm):
+        theta_i,phi_i = mat_util.to_spherical_negphi(wi)
+        theta_o,phi_o = mat_util.to_spherical_negphi(wo)
+        fr = self.mat.look_up(theta_i,phi_i,theta_o,phi_o)
+        return fr[1]
+
+    def eval_rgb_hd(self,theta_h,theta_d,phi_d):
+        idx = merl.get_index_from_hall_diff_coords(theta_h, theta_d, phi_d)
+        result = merl.get_half_diff_idxes_from_index(idx)
+        fr = self.mat.look_up_hdidx(result[0],result[1],result[2])
+        return fr
+
+    def eval_rgb(self,wi,wo,wm):
+        theta_i,phi_i = mat_util.to_spherical(wi)
+        theta_o,phi_o = mat_util.to_spherical(wo)
+        fr = self.mat.look_up(theta_i,phi_i,theta_o,phi_o)
+        return np.asarray(fr)
+
+    # Used in powit testing
+    def eval_rgb_nocosweight(self,wi,wo,wm):
+        result = self.eval_rgb(wi,wo,wm)
+        result = result.reshape((3,1))
+        return result
+
+
+    def eval_channel(self,wi,wo,wh,channel_idx):
+        theta_i,phi_i = mat_util.to_spherical_negphi(wi)
+        theta_o,phi_o = mat_util.to_spherical_negphi(wo)
+        fr = self.mat.look_up(theta_i,phi_i,theta_o,phi_o)
+        return fr[channel_idx]
+
+
 
 def rotate_vector_to_up(N, V, eps=1e-8):
     """
@@ -868,3 +1038,125 @@ def rotate_vectors_to_up_batch(N_batch, V_batch, eps=1e-8):
     # Apply rotation matrices to V
     V_rot = np.einsum('bij,bj->bi', R, V_norm)  # Shape: (B, 3)
     return V_rot
+
+
+def K(brdf_val, o: np.array, h: np.array):
+    """
+    Compute K(o,h) in power iteration paper
+
+    o,h are not in conventional shape..
+
+    :param brdf: the material
+    :param o: [3,1] both should be normalized
+    :param h: [3,N] both should be normalized
+    :return: K in shape (N,)
+    """
+    cos_theta_o = o[2,:]
+    cos_theta_h = h[2,:]
+
+    sec_theta_h = 1 / cos_theta_h
+
+    dot_product = np.dot(h.T, o.flatten())
+
+    k_array = 4 * brdf_val * np.power(cos_theta_o, 5) * np.power(sec_theta_h, 4) * dot_product
+
+    return k_array
+
+def integrate_K_prime(brdf_val, theta_o, theta_h, integrate_res, quadrature_weight):
+    """
+    \phi_o is does not matter, set to 0
+    :param brdf:
+    :param theta_o:
+    :param theta_h:
+    :param integrate_res:
+    :return:
+    """
+    cos_theta_o = np.cos(theta_o)
+    cos_theta_h = np.cos(theta_h)
+    sin_theta_h = np.sin(theta_h)
+
+    phi_h_list = np.linspace(0, np.pi * 2, integrate_res, endpoint=False)
+    h_list = mat_util.to_cartesian_vectorized(theta_h,phi_h_list)
+
+    o = mat_util.to_cartesian(theta_o, 0.0)
+
+    #numerical compute the integral
+    delta_s = np.pi * 2 / integrate_res
+
+    integral = delta_s * quadrature_weight * sin_theta_h * np.sum(K(brdf_val, o, h_list))
+
+    return integral
+
+
+def build_powit_K(brdf:MERL_MAT, N):
+    phi_o = 0
+
+    u_array = np.linspace(0,1.0,N, endpoint=False)
+    theta_o_array = u_array ** 2 * np.pi / 2
+    o_array = mat_util.to_cartesian_vectorized(theta_o_array, phi_o)
+    theta_h_array = np.copy(theta_o_array)
+
+    K_matrix = np.zeros((N, N))
+
+    # First implement a non-vectorized version
+    for i in range(N):
+        current_theta_o = theta_o_array[i]
+        current_o = o_array[:,i].reshape((3,1))
+
+        brdf_val = brdf.eval_rgb_nocosweight(current_o,current_o,current_o)
+        brdf_green = brdf_val[1]
+
+        for j in range(N):
+            current_theta_h = theta_h_array[j]
+            K_matrix[i,j] = integrate_K_prime(brdf_green, current_theta_o, current_theta_h, 128, 1 / N)
+
+
+    p = np.ones((N,1))
+
+    for i in range(4):
+        p = np.matmul(K_matrix, p)
+
+    #normalize p
+
+    p = p.flatten()
+
+
+    p_normalized = normalize_slope_p(p, N)
+
+    d = p_normalized *  np.power((1/np.cos(theta_o_array)),4)
+
+    return p_normalized
+
+
+
+def normalize_slope_p(p, N):
+    u_array = np.linspace(0, 1.0, N, endpoint=False)
+    theta_o_array = u_array ** 2 * np.pi / 2
+    tan_theta = np.tan(theta_o_array)
+    sec_theta = 1 / np.cos(theta_o_array)
+    du = 1 / N
+    sum_of_p = np.sum(np.pi * 2 * p * np.pi * u_array * tan_theta * sec_theta * sec_theta * du)
+    p_normalized = p / sum_of_p
+
+    return p_normalized
+
+
+
+
+def merl_test():
+    test_merl_material = MERL_MAT("../merl_database/alum-bronze.binary")
+    ndf = build_powit_K(test_merl_material,128)
+
+
+def powit_test():
+    test_powit_tab = powit_merl_ndf("../merl_database/alum-bronze.binary")
+
+
+    theta = torch.from_numpy(np.random.random(20) * np.pi / 2)
+    cos_theta = torch.cos(theta)
+
+    test_powit_tab.get_ndf_torch(cos_theta)
+
+if __name__ == "__main__":
+    powit_test()
+    merl_test()

@@ -13,7 +13,7 @@ def roughness_from_gloss(gloss, max_spec_power = 16, sqrt = True):
     """
     assert max_spec_power == 16 or max_spec_power == 18
     GGX_MAX_SPEC_POWER = max_spec_power
-    exponent = np.pow(2, gloss * GGX_MAX_SPEC_POWER)
+    exponent = np.power(2, gloss * GGX_MAX_SPEC_POWER)
     #return np.pow(2.0/(1 + exponent),0.25)
     #?? See Material Advances in Call of Duty:WWII
     if sqrt:

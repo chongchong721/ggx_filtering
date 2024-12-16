@@ -1169,7 +1169,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
     :param n_sample_per_level:
     :return:
     """
-    visualize_loss = False
+    visualize_loss = True
 
     device = get_device()
 
@@ -1427,7 +1427,7 @@ def optimize_multiple_locations(n_sample_per_level, constant, n_sample_per_frame
                                     view_reflection_parameterization,device,all_locations)
                     ref_param = (ggx_alpha, all_locations,tex_directions_res, tex_directions_res_map,
                                                 view_dirs, ggx_ref_jac_weight, view_ndf_clipping)
-                    visualize_high_loss_view_dependent(push_back_param,ref_param,0.4, view_theta)
+                    visualize_high_loss_view_dependent(push_back_param,ref_param,1.0, view_theta)
 
 
             tmp_pushed_back_sum = torch.sum(tmp_pushed_back_result, dim=[1, 2, 3, 4], keepdim=True)

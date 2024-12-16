@@ -5,7 +5,7 @@ from reference import compute_ggx_ndf_reference,compute_ggx_ndf_reference_torch_
 import numpy as np
 import mat_util
 import map_util
-from optmization_torch import precompute_opt_info,multiple_texel_full_optimization_vectorized,multiple_texel_full_optimization
+from optimization_ggx_torch import precompute_opt_info,multiple_texel_full_optimization_vectorized,multiple_texel_full_optimization
 import specular
 import logging
 

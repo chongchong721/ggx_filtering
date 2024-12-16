@@ -357,6 +357,9 @@ def to_cartesian_vectorized(theta, phi):
     theta = np.where(theta < 0.0001, 0.0, theta)
     theta = np.where(np.pi - theta < 0.0001, np.pi, theta)
 
+    if theta.size == 1:
+        theta = np.full_like(phi, fill_value=theta.item())
+
     sin_theta = np.sin(theta)
     cos_theta = np.cos(theta)
     sin_phi = np.sin(phi)

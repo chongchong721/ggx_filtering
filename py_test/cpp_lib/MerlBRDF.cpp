@@ -28,6 +28,8 @@
 
 #include <vector>
 
+#include <random>
+
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/stl_bind.h>
@@ -41,6 +43,40 @@ namespace py = pybind11;
 
 
 #define M_PI	3.1415926535897932384626433832795
+
+
+auto global_uniform_distribution = std::uniform_real_distribution<double>(0, 1);
+auto rng = std::mt19937(std::random_device{}());
+
+
+/* Standalone vec3 utility */
+struct vec3 {
+	static vec3 from_raw(const double *v) {return vec3((double)v[0], (double)v[1], (double)v[2]);}
+	static vec3 from_raw(const float *v) {return vec3((double)v[0], (double)v[1], (double)v[2]);}
+	static const double *to_raw(const vec3& v) {return &v.x;}
+	explicit vec3(double x = 0): x(x), y(x), z(x) {}
+	vec3(double x, double y, double z) : x(x), y(y), z(z) {}
+	explicit vec3(double theta, double phi);
+	double intensity() const {return (double)0.2126 * x + (double)0.7152 * y + (double)0.0722 * z;}
+	double x, y, z;
+};
+
+
+vec3 random_hemisphere() {
+	double u1 = global_uniform_distribution(rng);
+	double u2 = global_uniform_distribution(rng);
+
+	double phi = 2.0 * M_PI * u1;          // Phi in [0, 2pi)
+	double cos_theta = u2;                 // Cos(theta) in [0,1]
+	double sin_theta = std::sqrt(1.0 - cos_theta * cos_theta); // Sin(theta)
+
+	// Convert spherical coordinates to Cartesian coordinates
+	double x = sin_theta * std::cos(phi);
+	double y = sin_theta * std::sin(phi);
+	double z = cos_theta; // Since we're sampling the upper hemisphere (z >= 0)
+
+	return vec3(x, y, z);
+}
 
 
 
@@ -166,6 +202,12 @@ class MERL_BRDF{
 		double lookup_one_channel(double theta_in,double fi_in,
 					double theta_out, double fi_out,int idx);
 
+
+		void integrate_over_view_direction_monte_carlo(double theta_v,double &r_int, double &g_int, double &b_int, int n_it);
+		std::vector<std::vector<double>> integrate_all_view_theta_monte_carlo(int view_cos_theta_resolution, int is_n_sample);
+
+		void integrate_over_view_direction(double theta_v,double &r_int, double &g_int, double &b_int, int delta_factor);
+		std::vector<std::vector<double>> integrate_all_view_theta(int view_cos_theta_resolution, int delta_factor);
 
 };
 
@@ -396,12 +438,6 @@ std::vector<double> MERL_BRDF::half_diff_conversion_wrapper(double theta_in, dou
 }
 
 
-double  reduce_fi_d(double phi_d){
-	if (phi_d < 0.0)
-		phi_d += M_PI;
-
-	return phi_d;
-}
 
 
 double MERL_BRDF::lookup_one_channel(double theta_in,double fi_in, double theta_out, double fi_out, int idx){
@@ -444,6 +480,156 @@ double MERL_BRDF::lookup_one_channel(double theta_in,double fi_in, double theta_
 
 
 	return value->at(ind) * scale;
+}
+inline void MERL_BRDF::integrate_over_view_direction(double theta_v, double &r_int, double &g_int, double &b_int, int delta_factor) {
+	/**
+	 *
+	 * The default resolution is 1 degree. Which means, delta = PI / 180.0. If delta_factor > 1. It means we have a higher resolution
+	 * delta = PI / 180 / delta_factor
+	 **/
+
+	const double phi_v = 0;
+
+	double delta = M_PI / 180.0 / delta_factor; //more precision
+
+	double delta_half = 0.5 * delta;
+
+	double theta_l = delta_half;
+	double phi_l = delta_half;
+
+	double r_sum = 0.0;
+	double g_sum = 0.0;
+	double b_sum = 0.0;
+
+	double r_channel = 0.0;
+	double g_channel = 0.0;
+	double b_channel = 0.0;
+
+	int n_theta_loop = (int)((M_PI / 2) / (delta));
+	int n_phi_loop = (int)((M_PI *2) / (delta));
+
+
+	for(int i = 0; i < n_theta_loop; i++) {
+		double sin_theta_l = sin(theta_l);
+		double cos_theta_l = cos(theta_l);
+		double sincos_l = sin_theta_l * cos_theta_l;
+
+		for(int j = 0; j < n_phi_loop; j++) {
+			this->lookup_brdf_val(theta_v,phi_v,theta_l,phi_l,
+				r_channel,g_channel,b_channel);
+			r_sum += (r_channel * sincos_l);
+			g_sum += (g_channel * sincos_l);
+			b_sum += (b_channel * sincos_l);
+
+			phi_l += delta;
+		}
+
+		theta_l += delta;
+
+		phi_l = delta_half; //set phi back to 0.0
+	}
+
+	r_int = r_sum * delta * delta;
+	g_int = g_sum * delta * delta;
+	b_int = b_sum * delta * delta;
+
+}
+
+
+std::vector<std::vector<double>> MERL_BRDF::integrate_all_view_theta(int view_cos_theta_resolution, int delta_factor) {
+	std::vector<std::vector<double>> result;
+	result.emplace_back();
+	result.emplace_back();
+	result.emplace_back();
+
+	double delta = 1.0 / (view_cos_theta_resolution - 1);
+
+	double cos_theta_v = 0.0;
+
+	for(int i =0; i < view_cos_theta_resolution; i++) {
+		double theta_v = acos(cos_theta_v);
+
+		double r_result,g_result,b_result;
+
+		this->integrate_over_view_direction(theta_v,r_result,g_result,b_result, delta_factor);
+
+		result[0].push_back(r_result);
+		result[1].push_back(g_result);
+		result[2].push_back(b_result);
+
+		cos_theta_v += delta;
+	}
+
+	return result;
+
+}
+
+inline void MERL_BRDF::integrate_over_view_direction_monte_carlo(double theta_v, double &r_int, double &g_int, double &b_int, int n_it) {
+	double r_sum = 0.0;
+	double g_sum = 0.0;
+	double b_sum = 0.0;
+
+	double r_channel = 0.0;
+	double g_channel = 0.0;
+	double b_channel = 0.0;
+
+	const double phi_v = 0.0;
+
+	for (int i = 0; i < n_it; i++) {
+		auto direction_l = random_hemisphere();
+		double cos_theta_l = direction_l.z;
+		double theta_l = acos(cos_theta_l);
+		double phi_l = atan2(direction_l.y, direction_l.x);
+
+
+		this->lookup_brdf_val(theta_v,phi_v,theta_l,phi_l,
+				r_channel,g_channel,b_channel);
+		r_sum += (r_channel * cos_theta_l);
+		g_sum += (g_channel * cos_theta_l);
+		b_sum += (b_channel * cos_theta_l);
+
+	}
+
+	r_int = r_sum * M_PI * 2 / static_cast<double>(n_it);
+	g_int = g_sum * M_PI * 2 / static_cast<double>(n_it);
+	b_int = b_sum * M_PI * 2 / static_cast<double>(n_it);
+}
+
+
+inline std::vector<std::vector<double> > MERL_BRDF::integrate_all_view_theta_monte_carlo(int view_cos_theta_resolution, int is_n_sample) {
+	std::vector<std::vector<double>> result;
+	result.emplace_back();
+	result.emplace_back();
+	result.emplace_back();
+
+	double delta = 1.0 / (view_cos_theta_resolution - 1);
+
+	double cos_theta_v = 0.0;
+
+	for(int i =0; i < view_cos_theta_resolution; i++) {
+		double theta_v = acos(cos_theta_v);
+
+		double r_result,g_result,b_result;
+
+		this->integrate_over_view_direction_monte_carlo(theta_v,r_result,g_result,b_result, is_n_sample);
+
+		result[0].push_back(r_result);
+		result[1].push_back(g_result);
+		result[2].push_back(b_result);
+
+		cos_theta_v += delta;
+	}
+
+	return result;
+}
+
+
+
+double  reduce_fi_d(double phi_d){
+	if (phi_d < 0.0)
+		phi_d += M_PI;
+
+	return phi_d;
 }
 
 
@@ -665,6 +851,8 @@ PYBIND11_MODULE(merl,m){
 	.def("look_up",&MERL_BRDF::lookup_wrapper)
 	.def("look_up_channel",&MERL_BRDF::lookup_one_channel)
 	.def("look_up_hdidx",&MERL_BRDF::lookup_wrapper_hdidxes)
+	.def("integrate_second_term_theta_h",&MERL_BRDF::integrate_all_view_theta)
+	.def("integrate_second_term_theta_h_monte_carlo",&MERL_BRDF::integrate_all_view_theta_monte_carlo)
 	.def_readonly("m_size",&MERL_BRDF::size)
 	.def_readwrite("r_channel_unscaled", &MERL_BRDF::vector_data_r)
 	.def_readwrite("g_channel_unscaled", &MERL_BRDF::vector_data_g)

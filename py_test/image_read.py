@@ -23,13 +23,14 @@ def hdri_read(exr_file_path):
     return img_exr
 
 
-def write_exr(ldr_img, filename = None):
+def write_hdr_image(ldr_img, filename = None):
     """
 
     :param ldr_img: ldr_img is assumed to be in BGR format
     :param filename:
     :return:
     """
+    ldr_img = ldr_img.astype(np.float32)
     ldr_img = cv2.cvtColor(ldr_img, cv2.COLOR_BGR2RGB)
 
 
@@ -271,7 +272,7 @@ def gen_cubemap_preview_image(cubemap,cubemap_res, preview_path = None,filename 
         cubemap_preview = np.load(preview_path).astype(np.float32)
 
 
-    write_exr(cubemap_preview,filename)
+    write_hdr_image(cubemap_preview, filename)
 
     # tonemap1 = cv2.createTonemap(gamma = 2.2)
     #
@@ -292,7 +293,7 @@ def test_tonemap():
 
     new_filename =  "tonemapped_map.jpg"
     cv2.imwrite(new_filename, im2_8bit)
-    write_exr(img)
+    write_hdr_image(img)
 
 
 
@@ -301,6 +302,71 @@ def envmap_to_cubemap(path, cubemap_res):
     interpolators = grid_interpolator(envmap_img)
     cubemap = loop_through_cube_face_vectorized(envmap_img, cubemap_res, interpolators)
     return cubemap
+
+
+def gen_cubemap_from_cubemap_per_face(cubemap, cubemap_res, directory="../cubemap_face/", prefix=None):
+    """
+    Used to generate HDR texture for OpenGL
+    :param path:
+    :param cubemap_res:
+    :param directory:
+    :return:
+
+    """
+    assert cubemap.shape[1] == cubemap.shape[2] == cubemap_res
+    if prefix is None:
+        name_dict = {
+            0: 'pos_x.hdr',1: 'neg_x.hdr',2: 'pos_y.hdr',3: 'neg_y.hdr',4: 'pos_z.hdr',5: 'neg_z.hdr'}
+    else:
+        name_dict = {
+            0: prefix + '_pos_x.hdr',1: prefix + '_neg_x.hdr',2: prefix + '_pos_y.hdr',3: prefix + '_neg_y.hdr',4: prefix + '_pos_z.hdr',5: prefix + '_neg_z.hdr'
+        }
+    for i in range(6):
+        name = name_dict[i]
+        image = cubemap[i]
+        write_hdr_image(image, directory + name)
+
+
+def gen_cubemap_from_envmap_per_face(path, cubemap_res, directory="../cubemap_face/", prefix=None):
+    """
+    Used to generate HDR texture for OpenGL
+    :param path:
+    :param cubemap_res:
+    :param directory:
+    :return:
+    """
+    if prefix is None:
+        name_dict = {
+            0: 'pos_x.hdr',1: 'neg_x.hdr',2: 'pos_y.hdr',3: 'neg_y.hdr',4: 'pos_z.hdr',5: 'neg_z.hdr'}
+    else:
+        name_dict = {
+            0: prefix + '_pos_x.hdr',1: prefix + '_neg_x.hdr',2: prefix + '_pos_y.hdr',3: prefix + '_neg_y.hdr',4: prefix + '_pos_z.hdr',5: prefix + '_neg_z.hdr'
+        }
+    cubemap = envmap_to_cubemap(path, cubemap_res)
+
+    for i in range(6):
+        name = name_dict[i]
+        image = cubemap[i]
+        write_hdr_image(image, directory + name)
+
+
+def gen_second_sum_texture(second_sum_list, name_list, directory="../second_sum/"):
+    """
+        Each material is [3,res]
+    :param second_sum_list:
+    :param name_list:
+    :return:
+    """
+
+    count = len(name_list)
+    assert count == len(second_sum_list)
+
+    for i in range(count):
+        second_sum = second_sum_list[i]
+        name = name_list[i]
+        array = second_sum.T[None,...]
+
+        write_hdr_image(array, directory + name + '.hdr')
 
 
 
@@ -330,6 +396,8 @@ def rename():
 
 
 if __name__ == '__main__':
+    gen_cubemap_from_envmap_per_face('exr_files/08-21_Swiss_A.hdr', 512)
+
     rename()
     #read_exr_image('exr_files/rosendal_plains_2_1k.exr')
     #test_tonemap()

@@ -3698,13 +3698,15 @@ namespace powit_extraction {
 
 		djb::float_t get_fitted_ggx_alpha() const;
 
+		djb::float_t compute_ndf(djb::float_t theta_h, djb::float_t phi_h) const;
+
 	private:
 		void build_ndf();
 	};
 
 
 
-	inline isotropic_merl_ndf::isotropic_merl_ndf(std::string name, int extract_res)
+	isotropic_merl_ndf::isotropic_merl_ndf(std::string name, int extract_res)
 		:tab( djb::merl(name.c_str()),extract_res, true)
 	{
 		this->ndf = std::vector<djb::float_t>(extract_res);
@@ -3726,6 +3728,10 @@ namespace powit_extraction {
 			djb::float_t r_h = tan(theta_h);
 			djb::float_t p22_r = tab.p22_radial(r_h * r_h);
 			djb::float_t ndf_pdf = p22_r / cos_theta_h / cos_theta_h / cos_theta_h / cos_theta_h;
+
+			djb::float_t test_pdf = this->compute_ndf(theta_h,0.0);
+
+
 			this->ndf.push_back(ndf_pdf);
 		}
 		this->ndf.push_back(0);
@@ -3749,6 +3755,11 @@ namespace powit_extraction {
 		assert(ax == ay);
 		return ax;
 	}
+
+	inline djb::float_t isotropic_merl_ndf::compute_ndf(djb::float_t theta_h, djb::float_t phi_h) const {
+		return this->tab.ndf(djb::vec3(theta_h,phi_h));
+	}
+
 
 
 

@@ -17,6 +17,8 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#include "Cubesphere.h"
+
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
@@ -84,6 +86,45 @@ unsigned int loadHDRCubemap(std::vector<std::string> faces)
     return textureID;
 }
 
+// Also in HDR format
+unsigned int load2DHDRTexture(std::string filename) {
+    std::string path_prefix = "/home/yuan/school/ggx_filtering/second_sum/";
+    unsigned int textureID;
+    glGenTextures(1, &textureID);
+    glBindTexture(GL_TEXTURE_2D, textureID);
+    int width, height, nrComponents;
+    float *data = stbi_loadf((path_prefix + filename).c_str(), &width, &height, &nrComponents, 0);
+    if (data)
+    {
+        GLenum format = (nrComponents == 3) ? GL_RGB : GL_RGBA;
+        glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            GL_RGB16F, // Internal format for HDR
+            width,
+            height,
+            0,
+            format,
+            GL_FLOAT, // Data type
+            data
+        );
+        stbi_image_free(data);
+    }
+    else
+    {
+        std::cout << "Failed to load HDR cubemap at path: " << filename << std::endl;
+        stbi_image_free(data);
+    }
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    return textureID;
+}
 
 
 
@@ -134,6 +175,16 @@ int main() {
         "neg_y.hdr",  // GL_TEXTURE_CUBE_MAP_NEGATIVE_Y
         "pos_z.hdr",   // GL_TEXTURE_CUBE_MAP_NEGATIVE_Z
         "neg_z.hdr"     // GL_TEXTURE_CUBE_MAP_POSITIVE_Z
+    };
+
+
+    std::vector<std::string> filtered_faces{
+        "filtered_pos_x.hdr",   // GL_TEXTURE_CUBE_MAP_POSITIVE_X
+        "filtered_neg_x.hdr",    // GL_TEXTURE_CUBE_MAP_NEGATIVE_X
+        "filtered_pos_y.hdr",     // GL_TEXTURE_CUBE_MAP_POSITIVE_Y
+        "filtered_neg_y.hdr",  // GL_TEXTURE_CUBE_MAP_NEGATIVE_Y
+        "filtered_pos_z.hdr",   // GL_TEXTURE_CUBE_MAP_NEGATIVE_Z
+        "filtered_neg_z.hdr"     // GL_TEXTURE_CUBE_MAP_POSITIVE_Z
     };
 
 
@@ -196,14 +247,86 @@ int main() {
     // Unbind the VAO to prevent accidental modification
     glBindVertexArray(0);
 
-    Shader skybox_shader( (program_directory + "cpp_test/shader_program/env_map_vertex.glsl").c_str(), (program_directory + "cpp_test/shader_program/env_map_fragment.glsl").c_str());
+    Shader skybox_shader( (program_directory + "cpp_test/shader_program/env_map_vertex.glsl").c_str(),
+        (program_directory + "cpp_test/shader_program/env_map_fragment.glsl").c_str());
+    Shader merl_sphere_shader((program_directory + "cpp_test/shader_program/sphere_vertex.glsl").c_str(),
+        (program_directory + "cpp_test/shader_program/sphere_fragment.glsl").c_str());
 
     //Load skybox(environment map
     unsigned int cubemap_texture = loadHDRCubemap(faces);
 
+    //Load second sum texture and second sum texture
+    unsigned int filtered_cubemap_texture = loadHDRCubemap(filtered_faces);
+    unsigned int second_sum_texture = load2DHDRTexture("second_sum.hdr");
+
+
+    //Bind skybox to Texture unit 0
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemap_texture);
+
+    //bind filtered cubemap(first sum) to unit 1
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, filtered_cubemap_texture);
+
+    //bind second sum to unit2
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, second_sum_texture);
+
+
+
     skybox_shader.use();
     skybox_shader.setInt("skybox", 0);
 
+    merl_sphere_shader.use();
+    merl_sphere_shader.setInt("skybox",0);
+    merl_sphere_shader.setInt("filteredMap",1);
+    merl_sphere_shader.setInt("secondTermTexture",2);
+
+
+
+    //setup a sphere
+    //Code from https://www.songho.ca/opengl/gl_sphere.html#example_icosphere
+
+    Cubesphere sphere = Cubesphere(1.0,4);
+    unsigned int sphereVAO,sphereVerticesBO,sphereIndicesBO;
+
+
+    // VAO
+    glGenVertexArrays(1, &sphereVAO);
+    glBindVertexArray(sphereVAO);
+
+
+    // Vertices buffer
+    glGenBuffers(1, &sphereVerticesBO);
+    glBindBuffer(GL_ARRAY_BUFFER, sphereVerticesBO);           // for vertex data
+    glBufferData(GL_ARRAY_BUFFER,                   // target
+                 sphere.getInterleavedVertexSize(), // data size, # of bytes
+                 sphere.getInterleavedVertices(),   // ptr to vertex data
+                 GL_STATIC_DRAW);
+
+
+    // Indices buffer
+    glGenBuffers(1, &sphereIndicesBO);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sphereIndicesBO);   // for index data
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,           // target
+                 sphere.getIndexSize(),             // data size, # of bytes
+                 sphere.getIndices(),               // ptr to index data
+                 GL_STATIC_DRAW);                   // usage
+
+    //set attributes 0 for vertices 1 for normals for now
+
+    glEnableVertexAttribArray(0); //vertices
+    glEnableVertexAttribArray(1); //normals
+    glEnableVertexAttribArray(2); //uv coordinates(maybe not used)
+
+    int stride = sphere.getInterleavedStride();     // should be 32 bytes
+    glVertexAttribPointer(0, 3, GL_FLOAT, false, stride, (void*)0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, false, stride, (void*)(sizeof(float)*3));
+    glVertexAttribPointer(2,  2, GL_FLOAT, false, stride, (void*)(sizeof(float)*6));
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
     while(!glfwWindowShouldClose(window)) {
 
@@ -230,8 +353,8 @@ int main() {
         skybox_shader.setMat4("view", view);
 
         glBindVertexArray(skyboxVAO);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, cubemap_texture);
+        // glActiveTexture(GL_TEXTURE0);
+        // glBindTexture(GL_TEXTURE_CUBE_MAP, cubemap_texture);
         glDrawArrays(GL_TRIANGLES, 0, 36);
 
         glBindVertexArray(0);

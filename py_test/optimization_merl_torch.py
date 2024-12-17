@@ -301,7 +301,7 @@ def optimize_multiple_locations_merl(merl_material_name,n_sample_per_level, cons
                 # result /= torch.sum(result)
                 # visualization.visualize_optim_result(ggx_ref, result)
                 logger.info(f"saving model")
-                optimization_ggx_torch.save_model(model, "./model/" + model_name)
+                optimization_ggx_torch.save_model(model, "./model_merl/" + model_name)
                 # logger.info(f"[it{i}]Loss: {mean_error.item()}")
                 # if not view_dependent:
                 #     synthetic_filter_showcase(model().cpu().detach().numpy(), constant, adjust_level, ggx_alpha,
@@ -320,10 +320,10 @@ def optimize_multiple_locations_merl(merl_material_name,n_sample_per_level, cons
             logger.info("[it{}]:loss is{}".format(i, obj.item()))
             if(torch.isnan(obj)):
                 logger.info("NaN loss detected in LBFGS, Save last param and terminate!")
-                optimization_ggx_torch.save_model(model, "./model/" + model_name + "_nan")
+                optimization_ggx_torch.save_model(model, "./model_merl/" + model_name + "_nan")
             if i % 50 == 0:
                 logger.info(f"saving model")
-                optimization_ggx_torch.save_model(model, "./model/" + model_name)
+                optimization_ggx_torch.save_model(model, "./model_merl/" + model_name)
                 # if not view_dependent:
                 #     synthetic_filter_showcase(model().cpu().detach().numpy(), constant, adjust_level, ggx_alpha,
                 #                           n_sample_per_frame, 2, n_sample_per_level, optimizer_type, random_shuffle,
@@ -331,6 +331,11 @@ def optimize_multiple_locations_merl(merl_material_name,n_sample_per_level, cons
 
 
     logger.info(f"MAX n_iter {n_epoch} reached")
+
+
+
+def visualize_merl_ref_ndf(merl_material_name):
+    pass
 
 
 

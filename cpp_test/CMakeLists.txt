@@ -80,8 +80,8 @@ target_link_libraries(gl_test ${CMAKE_DL_LIBS})
 
 
 add_executable(render_test
-        render_test.cpp shader.cpp include/shader.h
-        include/camera.h include/stb_image.h)
+        render_test.cpp shader.cpp Cubesphere.cpp include/shader.h
+        include/camera.h include/stb_image.h include/Cubesphere.h)
 
 target_include_directories(render_test PUBLIC include/)
 

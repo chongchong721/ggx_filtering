@@ -929,7 +929,46 @@ def model_filename(ggx_alpha, constant, n_sample_per_frame ,n_sample_per_level, 
     return model_name
 
 
+def write_dict_to_txt(dictionary, filename, delimiter=' '):
+    """
+    Writes a dictionary to a plain text file with each key-value pair on a separate line.
 
+    Parameters:
+    - dictionary (dict): The dictionary to write. Keys should be strings, and values should be floats.
+    - filename (str): The path to the file where the dictionary will be saved.
+    - delimiter (str): The string used to separate keys and values. Default is a space.
+    """
+    try:
+        with open(filename, 'w') as file:
+            for key, value in dictionary.items():
+                file.write(f"{key}{delimiter}{value}\n")
+        print(f"Dictionary successfully saved to '{filename}'.")
+    except IOError as e:
+        print(f"An error occurred while writing to the file: {e}")
+
+def read_txt_to_dict(filename, delimiter=' '):
+    """
+    Reads a plain text file and converts it back into a dictionary.
+
+    Parameters:
+    - filename (str): The path to the file to read.
+    - delimiter (str): The string used to separate keys and values. Must match the delimiter used during writing.
+
+    Returns:
+    - dict: The reconstructed dictionary.
+    """
+    reconstructed_dict = {}
+    try:
+        with open(filename, 'r') as file:
+            for line in file:
+                key, value = line.strip().split(delimiter)
+                reconstructed_dict[key] = float(value)  # Convert value back to float
+        print(f"Dictionary successfully loaded from '{filename}'.")
+    except IOError as e:
+        print(f"An error occurred while reading the file: {e}")
+    except ValueError as ve:
+        print(f"Value conversion error: {ve}")
+    return reconstructed_dict
 
 if __name__ == "__main__":
     face = 4

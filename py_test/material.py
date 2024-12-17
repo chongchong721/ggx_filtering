@@ -17,6 +17,10 @@ import powit
 
 import torch
 
+import image_read
+
+import map_util
+
 class Lambertian:
     albedo = 1.0
     albedo_rgb : np.ndarray
@@ -785,6 +789,35 @@ class powit_merl_ndf:
 
         return ndf
 
+
+    def get_ndf_numpy(self, cos_theta:np.ndarray):
+        """
+               :param cos_theta:
+               :return:
+               """
+        theta_value = np.arccos(cos_theta)
+
+        original_shape = theta_value.shape
+        theta_value_flat = theta_value.flatten()
+
+        # all theta value should be within the range of 0,np.pi/2
+
+        theta_idx = np.searchsorted(self.merl_ndf_theta,theta_value_flat, side='left')
+
+        theta_0 = self.merl_ndf_theta[theta_idx - 1]
+        theta_1 = self.merl_ndf_theta[theta_idx]
+
+        f0 = self.merl_ndf[theta_idx - 1]
+        f1 = self.merl_ndf[theta_idx]
+
+        portion_to_theta0 = (theta_value_flat - theta_0) / (theta_1 - theta_0)
+
+        ndf_flat = f1 * portion_to_theta0 + f0 * (1 - portion_to_theta0)
+
+        ndf = ndf_flat.reshape(original_shape)
+
+        return ndf
+
     def get_fitted_alpha(self):
         return self.merl_tabular.get_fitted_alpha()
 
@@ -896,6 +929,16 @@ class  MERL_MAT:
         theta_o,phi_o = mat_util.to_spherical_negphi(wo)
         fr = self.mat.look_up(theta_i,phi_i,theta_o,phi_o)
         return fr[channel_idx]
+
+
+    def integrate_view_theta(self,res,n_factor=1):
+        result = self.mat.integrate_second_term_theta_h(res,n_factor)
+
+        return result
+
+    def integrate_view_theta_mc(self,res,n_is=500000):
+        result = self.mat.integrate_second_term_theta_h_monte_carlo(res,n_is)
+        return result
 
 
 
@@ -1145,6 +1188,56 @@ def normalize_slope_p(p, N):
 
 
 
+def read_all_merl_alpha():
+
+
+    dict_alpha = map_util.read_txt_to_dict('merl_fitted_alpha.txt', delimiter=':')
+
+    return dict_alpha
+
+
+def generate_all_merl_approximate_level():
+    dict_alpha = read_all_merl_alpha()
+
+    dict_level = {}
+
+    import specular
+    level_info = specular.cubemap_level_params(18)
+
+    n_level = 7
+
+    alpha_list = [level_info[i].roughness for i in range(n_level)]
+    alpha_list = np.array(alpha_list)
+
+    merl_alpha_list = list(dict_alpha.values())
+    merl_alpha_list = np.array(merl_alpha_list)
+
+    idx_right = np.searchsorted(alpha_list, merl_alpha_list,side='left')
+    idx_left = idx_right - 1
+
+    merl_alpha_left = alpha_list[idx_left]
+    merl_alpha_right = alpha_list[idx_right]
+
+    #larger, closer to right side alpha
+    merl_alpha_portion = (merl_alpha_list - merl_alpha_left) / (merl_alpha_right - merl_alpha_left)
+
+    merl_level_idx = np.where(merl_alpha_portion > 0.5, idx_right, idx_left)
+
+    all_keys = list(dict_alpha.keys())
+
+    for i in range(len(all_keys)):
+        dict_level[all_keys[i]] = merl_level_idx[i]
+
+    map_util.write_dict_to_txt(dict_level,"merl_approximate_level.txt",":")
+
+    print("Done")
+
+
+
+
+
+
+
 def generate_all_merl_alpha():
     import os
     full_merl_directory = '/home/yuan/school/graphics/BRDFDatabase/brdfs/'
@@ -1162,58 +1255,148 @@ def generate_all_merl_alpha():
             tmp = powit_merl_ndf(brdf_name)
             dict_alpha[file[:-7]] = tmp.get_fitted_alpha()
 
-    def write_dict_to_txt(dictionary, filename, delimiter=' '):
-        """
-        Writes a dictionary to a plain text file with each key-value pair on a separate line.
-
-        Parameters:
-        - dictionary (dict): The dictionary to write. Keys should be strings, and values should be floats.
-        - filename (str): The path to the file where the dictionary will be saved.
-        - delimiter (str): The string used to separate keys and values. Default is a space.
-        """
-        try:
-            with open(filename, 'w') as file:
-                for key, value in dictionary.items():
-                    file.write(f"{key}{delimiter}{value}\n")
-            print(f"Dictionary successfully saved to '{filename}'.")
-        except IOError as e:
-            print(f"An error occurred while writing to the file: {e}")
-
-
-    def read_txt_to_dict(filename, delimiter=' '):
-        """
-        Reads a plain text file and converts it back into a dictionary.
-
-        Parameters:
-        - filename (str): The path to the file to read.
-        - delimiter (str): The string used to separate keys and values. Must match the delimiter used during writing.
-
-        Returns:
-        - dict: The reconstructed dictionary.
-        """
-        reconstructed_dict = {}
-        try:
-            with open(filename, 'r') as file:
-                for line in file:
-                    key, value = line.strip().split(delimiter)
-                    reconstructed_dict[key] = float(value)  # Convert value back to float
-            print(f"Dictionary successfully loaded from '{filename}'.")
-        except IOError as e:
-            print(f"An error occurred while reading the file: {e}")
-        except ValueError as ve:
-            print(f"Value conversion error: {ve}")
-        return reconstructed_dict
 
     # Sorting the Dictionary by Values (Low to High)
     sorted_dict_alpha = dict(sorted(dict_alpha.items(), key=lambda item: item[1]))
 
 
-    write_dict_to_txt(sorted_dict_alpha, 'brdf_fitted_alpha.txt', delimiter=':')
+    map_util.write_dict_to_txt(sorted_dict_alpha, 'merl_fitted_alpha.txt', delimiter=':')
+
+
+def second_term_integration_test(name="../merl_database/alum-bronze.binary"):
+    merl_brdf = MERL_MAT(name)
+    result = merl_brdf.integrate_view_theta(128,5)
+    result_mc = merl_brdf.integrate_view_theta_mc(128,500000)
+    print("Done")
 
 
 
+def generate_second_term(name_list):
+    for name in name_list:
+        merl_brdf = MERL_MAT(name)
+
+        start_time = time.time()
+        result = merl_brdf.integrate_view_theta(128,12)
+        end_time = time.time()
+        print("time consumption numerical", end_time - start_time)
+
+        #start_time = time.time()
+        #result_mc = merl_brdf.integrate_view_theta_mc(128,2073600)
+        #end_time = time.time()
+        #print("time consumption mc", end_time - start_time)
+
+        result_np = np.array(result)
+        #result_mc_np = np.array(result_mc)
+
+        #save second term
+
+        material_name = name.split('/')[-1][:-7]
+
+        np.save("./second_term/numerical/" + material_name + ".npy", result_np)
+        #np.save("./second_term/mc/" + material_name + ".npy", result_mc_np)
 
 
+def second_term_script():
+    import sys
+    argv = sys.argv
+    if len(argv) < 2:
+        print("please specify partiion i (i is int and i < 5")
+    else:
+        import os
+        full_merl_directory = '/home/yuan/school/graphics/BRDFDatabase/brdfs/'
+        for root, dirs, files in os.walk(full_merl_directory):
+            # print("Root:", root)
+            # print("Directories:", dirs)
+            # print("Files:", files)
+            break
+
+        all_names = []
+
+        files.sort()
+
+        for file in files:
+            if file[-7:] == '.binary':
+                brdf_name = full_merl_directory + file
+                # tmp = powit_merl_ndf(brdf_name)
+                # dict_alpha[file[:-7]] = tmp.get_fitted_alpha()
+                all_names.append(brdf_name)
+
+        i = int(argv[1])
+        names = all_names[i * 20:(i + 1) * 20]
+
+        print(names)
+
+        generate_second_term(names)
+
+
+
+def read_second_term_result():
+    import os
+    full_merl_directory = '/home/yuan/school/graphics/BRDFDatabase/brdfs/'
+    for root, dirs, files in os.walk(full_merl_directory):
+        # print("Root:", root)
+        # print("Directories:", dirs)
+        # print("Files:", files)
+        break
+
+    all_names = []
+
+    files.sort()
+
+    for file in files:
+        if file[-7:] == '.binary':
+            brdf_name = full_merl_directory + file
+            # tmp = powit_merl_ndf(brdf_name)
+            # dict_alpha[file[:-7]] = tmp.get_fitted_alpha()
+            all_names.append(brdf_name)
+
+
+    for name in all_names:
+        material_name = name.split('/')[-1][:-7]
+
+        result = np.load("./second_term/numerical/" + material_name + ".npy")
+        result_mc = np.load("./second_term/mc/" + material_name + ".npy")
+
+        print("Done")
+
+
+def save_second_term_texture():
+    """
+    Assume result already saved in numpy form
+    :return:
+    """
+    import os
+    full_merl_directory = '/home/yuan/school/graphics/BRDFDatabase/brdfs/'
+    for root, dirs, files in os.walk(full_merl_directory):
+        # print("Root:", root)
+        # print("Directories:", dirs)
+        # print("Files:", files)
+        break
+
+    all_names = []
+
+    files.sort()
+
+    for file in files:
+        if file[-7:] == '.binary':
+            brdf_name = full_merl_directory + file
+            # tmp = powit_merl_ndf(brdf_name)
+            # dict_alpha[file[:-7]] = tmp.get_fitted_alpha()
+            all_names.append(brdf_name)
+
+    result_list = []
+    name_list = []
+
+
+    for name in all_names:
+        material_name = name.split('/')[-1][:-7]
+
+        result = np.load("./second_term/numerical/" + material_name + ".npy")
+
+        result_list.append(result)
+        name_list.append(material_name)
+
+    image_read.gen_second_sum_texture(result_list, name_list)
 
 
 def merl_test():
@@ -1231,6 +1414,17 @@ def powit_test():
     test_powit_tab.get_ndf_torch(cos_theta)
 
 if __name__ == "__main__":
-    generate_all_merl_alpha()
-    powit_test()
-    merl_test()
+    generate_all_merl_approximate_level()
+
+
+    #save_second_term_texture()
+    #second_term_script()
+    #read_second_term_result()
+
+
+
+
+    #second_term_integration_test()
+    #generate_all_merl_alpha()
+    #powit_test()
+    #merl_test()

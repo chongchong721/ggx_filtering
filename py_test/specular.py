@@ -46,6 +46,6 @@ def cubemap_level_params(max_power = 16, sqrt = True):
 
 
 if __name__ == '__main__':
-    levels = cubemap_level_params(18,False)
+    levels = cubemap_level_params(18,True)
     for l in levels:
         print(l.roughness)

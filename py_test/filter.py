@@ -1166,7 +1166,7 @@ def visualize_view_dependent_filter_sample_directions(constant,adjust_level,ggx_
 
 def generate_merl_filtered_result(merl_material_name,n_sample_per_level, constant, n_sample_per_frame, adjust_level = False,
                                 optimizer_type = "adam", random_shuffle = False, allow_neg_weight = False,
-                                ref_jac_weight = 'None', ndf_clipping = False,compute_numerical = False):
+                                ref_jac_weight = 'None', ndf_clipping = False,compute_numerical = False, synthetic = False):
     merl_material_name_noext = merl_material_name.split('.')[0]
     model_name = map_util.model_merl_filename(merl_name=merl_material_name_noext, n_sample_per_frame=n_sample_per_frame,
                                           n_sample_per_level=n_sample_per_level, constant=constant, adjust_level=adjust_level,
@@ -1195,35 +1195,157 @@ def generate_merl_filtered_result(merl_material_name,n_sample_per_level, constan
     texel_dir_torch_map = torch.from_numpy(map_util.texel_directions(res).astype(np.float32))
     texel_dir_torch = texel_dir_torch_map / torch.linalg.norm(texel_dir_torch_map, dim=-1, keepdim=True)
 
+    if not synthetic:
 
-    file_name = "08-21_Swiss_A.hdr"
-    # mipmap_l0 = image_read.envmap_to_cubemap('exr_files/' + file_name, 128)
-    mipmap_l0 = np.load("exr_files/" + file_name[:-4] + "128.npy")
+        file_name = "08-21_Swiss_A.hdr"
+        # mipmap_l0 = image_read.envmap_to_cubemap('exr_files/' + file_name, 128)
+        mipmap_l0 = np.load("exr_files/" + file_name[:-4] + "128.npy")
 
-    if compute_numerical:
-        #numerical integrate
-        merl_ndf = material.powit_merl_ndf('/home/yuan/school/graphics/BRDFDatabase/brdfs/' + merl_material_name)
-        numerical_result = reference.compute_merl_tab_ndf_reference(mipmap_l0,128,res, merl_ndf)
-        image_read.gen_cubemap_preview_image(numerical_result, res, filename = "./merl_filtered_test/" + "filtered_numerical_{}".format(merl_material_name_noext) + ".exr")
+        if compute_numerical:
+            #numerical integrate
+            merl_ndf = material.powit_merl_ndf('/home/yuan/school/graphics/BRDFDatabase/brdfs/' + merl_material_name)
+            numerical_result = reference.compute_merl_tab_ndf_reference(mipmap_l0,128,res, merl_ndf)
+            image_read.gen_cubemap_preview_image(numerical_result, res, filename = "./merl_filtered_test/" + "filtered_numerical_{}".format(merl_material_name_noext) + ".exr")
 
 
 
-    mipmap = interpolation.downsample_full(mipmap_l0, 7, j_inv=False)
-    fetched_filtered_result = fetch_samples_python_table(mipmap, this_level, params, n_sample_per_frame,
-                                                         constant=constant,
-                                                         j_adjust=adjust_level,
-                                                         allow_neg_weight=allow_neg_weight)
+        mipmap = interpolation.downsample_full(mipmap_l0, 7, j_inv=False)
+        fetched_filtered_result = fetch_samples_python_table(mipmap, this_level, params, n_sample_per_frame,
+                                                             constant=constant,
+                                                             j_adjust=adjust_level,
+                                                             allow_neg_weight=allow_neg_weight)
 
-    save_name = "./merl_filtered_test/" + "filtered_{}".format(merl_material_name_noext) + ".exr"
-    image_read.gen_cubemap_preview_image(fetched_filtered_result, res, filename=save_name)
-    image_read.gen_cubemap_from_cubemap_per_face(fetched_filtered_result,res,prefix = "filtered_{}".format(merl_material_name_noext))
+        save_name = "./merl_filtered_test/" + "filtered_{}".format(merl_material_name_noext) + ".exr"
+        image_read.gen_cubemap_preview_image(fetched_filtered_result, res, filename=save_name)
+        image_read.gen_cubemap_from_cubemap_per_face(fetched_filtered_result,res,prefix = "filtered_{}".format(merl_material_name_noext))
 
+    else:
+        dir = np.array([0.8,0.8,1.0])
+        mipmaps = fetch_synthetic(dir,128)
+
+
+
+        result = fetch_samples_python_table(mipmaps, this_level, params, n_sample_per_frame,
+                                                constant=constant, j_adjust=adjust_level,
+                                                allow_neg_weight=allow_neg_weight)
+        #result *= 1000
+        save_name = "./merl_filtered_test/" + "syhnthetic_{}".format(merl_material_name_noext) + ".exr"
+        image_read.gen_cubemap_preview_image(result, res, filename=save_name)
+
+
+
+def visualize_merl_sample_directions(merl_material_name='brass.binary',n_sample_per_level=200,constant=False,n_sample_per_frame=96,adjust_level=True,
+        optimizer_type="adam",random_shuffle=True,allow_neg_weight=True,ref_jac_weight='light',ndf_clipping=False):
+    merl_material_name_noext = merl_material_name.split('.')[0]
+    model_name = map_util.model_merl_filename(merl_name=merl_material_name_noext, n_sample_per_frame=n_sample_per_frame,
+                                              n_sample_per_level=n_sample_per_level, constant=constant,
+                                              adjust_level=adjust_level,
+                                              optim_method=optimizer_type, random_shuffle=random_shuffle,
+                                              allow_neg_weight=allow_neg_weight,
+                                              ref_jac_weight=ref_jac_weight, ndf_clipping=ndf_clipping)
+    if not constant:
+        model = QuadModel(n_sample_per_frame)
+    else:
+        model = ConstantModel(n_sample_per_frame)
+
+    if os.path.exists("./model_merl/" + model_name):
+        model.load_state_dict(torch.load("./model_merl/" + model_name, map_location=torch.device('cpu')))
+    else:
+        raise NotImplementedError
+
+    params = model().cpu().detach().numpy()
+
+    alpha_dict = map_util.read_txt_to_dict("merl_fitted_alpha.txt", ":")
+    approx_level_dict = map_util.read_txt_to_dict("merl_approximate_level.txt", ":")
+    this_alpha = alpha_dict[merl_material_name_noext]
+    this_level = int(approx_level_dict[merl_material_name_noext])
+
+    res = 128 >> this_level
+
+    coefficient_table = params
+    faces_xyz = map_util.texel_directions(res)
+
+    idx = np.random.randint(0,6)
+    idx1 = np.random.randint(0,res)
+    idx2 = np.random.randint(0,res)
+
+    face_xyz = faces_xyz[idx,idx1,idx2].reshape((1,3))
+
+    normal_direction = face_xyz.flatten() / np.linalg.norm(face_xyz.flatten())
+
+    all_directions = []
+    all_weights = []
+
+    for frame_idx in range(3):
+        X, Y, Z = gen_frame_xyz(face_xyz, frame_idx)
+        frame_weight = gen_frame_weight(face_xyz, frame_idx, False)
+        theta, phi, theta2, phi2 = gen_theta_phi(face_xyz, frame_idx=frame_idx, follow_code=False)
+        coeff_start = frame_idx * n_sample_per_frame
+        coeff_end = coeff_start + n_sample_per_frame
+
+
+
+        for sample_idx in range(n_sample_per_frame):
+            if not constant:
+                coeff_x_table = coefficient_table[0, :, coeff_start + sample_idx]
+                coeff_y_table = coefficient_table[1, :, coeff_start + sample_idx]
+                coeff_z_table = coefficient_table[2, :, coeff_start + sample_idx]
+                coeff_level_table = coefficient_table[3, :, coeff_start + sample_idx]
+                coeff_weight_table = coefficient_table[4, :, coeff_start + sample_idx]
+
+                coeff_x = coeff_x_table[0] + coeff_x_table[1] * theta2 + coeff_x_table[2] * phi2
+                coeff_y = coeff_y_table[0] + coeff_y_table[1] * theta2 + coeff_y_table[2] * phi2
+                coeff_z = coeff_z_table[0] + coeff_z_table[1] * theta2 + coeff_z_table[2] * phi2
+
+                sample_level = coeff_level_table[0] + coeff_level_table[1] * theta2 + coeff_level_table[2] * phi2
+                sample_weight = coeff_weight_table[0] + coeff_weight_table[1] * theta2 + coeff_weight_table[2] * phi2
+
+                #min_weight = sample_weight.min()
+
+                coeff_x = np.stack((coeff_x, coeff_x, coeff_x), axis=-1)
+                coeff_y = np.stack((coeff_y, coeff_y, coeff_y), axis=-1)
+                coeff_z = np.stack((coeff_z, coeff_z, coeff_z), axis=-1)
+            else:
+                coeff_x = coefficient_table[0, coeff_start + sample_idx]
+                coeff_y = coefficient_table[1, coeff_start + sample_idx]
+                coeff_z = coefficient_table[2, coeff_start + sample_idx]
+                sample_level = coefficient_table[3, coeff_start + sample_idx]
+                sample_weight = coefficient_table[4, coeff_start + sample_idx]
+
+                coeff_x = np.stack((coeff_x, coeff_x, coeff_x), axis=-1)
+                coeff_y = np.stack((coeff_y, coeff_y, coeff_y), axis=-1)
+                coeff_z = np.stack((coeff_z, coeff_z, coeff_z), axis=-1)
+
+
+            if not allow_neg_weight:
+                sample_weight = np.clip(sample_weight, 0, a_max=None)
+            sample_weight = sample_weight * frame_weight
+
+            sample_direction = coeff_x * X + coeff_y * Y + coeff_z * Z
+            abs_direction = np.abs(sample_direction)
+            max_dir = np.max(abs_direction, axis=-1)
+            sample_direction_map = sample_direction / np.stack([max_dir, max_dir, max_dir], axis=-1)
+            sample_direction_normalized = sample_direction / np.linalg.norm(sample_direction, axis=-1, keepdims=True)
+            all_directions.append(sample_direction_normalized.flatten())
+            all_weights.append(sample_weight[0])
+
+    import visualization
+
+    print("valid above hemisphere sample count:{} over {}".format(len(all_directions), n_sample_per_frame * 3))
+
+    visualization.plot_nvl_vector(normal_direction.flatten(), normal_direction.flatten(),
+                                  normal_direction.flatten(), all_directions, all_weights)
 
 
 if __name__ == '__main__':
+    # visualize_merl_sample_directions( merl_material_name='brass.binary',n_sample_per_level=200,constant=False,n_sample_per_frame=96,adjust_level=True,
+    #     optimizer_type="adam",random_shuffle=True,allow_neg_weight=True,ref_jac_weight='light',ndf_clipping=False,)
+
+    synthetic_merl = True
     generate_merl_filtered_result(
         merl_material_name='brass.binary',n_sample_per_level=200,constant=False,n_sample_per_frame=96,adjust_level=True,
-        optimizer_type="adam",random_shuffle=True,allow_neg_weight=True,ref_jac_weight='light',ndf_clipping=False, compute_numerical = True
+        optimizer_type="adam",random_shuffle=True,allow_neg_weight=True,ref_jac_weight='light',ndf_clipping=False, compute_numerical = False,
+        synthetic=synthetic_merl
     )
 
     n_mipmap_level = 7
@@ -1234,7 +1356,7 @@ if __name__ == '__main__':
 
     level = 2
 
-    test_option = 1
+    test_option = 4
     if test_option == 0:
         visualize_view_dependent_filter_sample_directions(constant=False, adjust_level=True,
                                                           ggx_alpha=info[level].roughness, n_sample_per_frame=96,

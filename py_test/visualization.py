@@ -481,7 +481,7 @@ def set_axes_equal(ax):
     ax.set_ylim3d([-1,1])
     ax.set_zlim3d([-1,1])
 
-def plot_nvl_vector(n_normalized,v_normalized,reflect_normalized,light_vectors_normalized,all_weights, X_frame):
+def plot_nvl_vector(n_normalized,v_normalized,reflect_normalized,light_vectors_normalized,all_weights, X_frame = None):
     matplotlib.use('TkAgg')
     origin = np.array([0, 0, 0])
     fig = plt.figure(figsize=(10, 8))

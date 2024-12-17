@@ -747,6 +747,7 @@ class powit_merl_ndf:
         :param res:
         :param profile: 2 means smith model, do not change
         """
+        self.res = res
         self.torch_device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
         self.merl_tabular = powit.isotropic_merl_ndf(fielname, res)
@@ -770,9 +771,11 @@ class powit_merl_ndf:
         original_shape = theta_value.shape
         theta_value_flat = theta_value.view(-1)
 
-        #all theta value should be within the range of 0,np.pi/2
+        # all theta value should be within the range of 0,np.pi/2
+        # However, due to numerical instability(especially we have an arccos here),
+        # it is better to clamp the index to 0,res-1
 
-        theta_idx = torch.searchsorted(self.merl_ndf_theta_torch, theta_value_flat, right=True)
+        theta_idx = torch.searchsorted(self.merl_ndf_theta_torch, theta_value_flat, right=False).clamp(min=0,max=self.res-1)
 
         theta_0 = self.merl_ndf_theta_torch[theta_idx - 1]
         theta_1 = self.merl_ndf_theta_torch[theta_idx]
@@ -802,7 +805,7 @@ class powit_merl_ndf:
 
         # all theta value should be within the range of 0,np.pi/2
 
-        theta_idx = np.searchsorted(self.merl_ndf_theta,theta_value_flat, side='left')
+        theta_idx = np.searchsorted(self.merl_ndf_theta,theta_value_flat, side='left').clip(min=0,max=self.res-1)
 
         theta_0 = self.merl_ndf_theta[theta_idx - 1]
         theta_1 = self.merl_ndf_theta[theta_idx]

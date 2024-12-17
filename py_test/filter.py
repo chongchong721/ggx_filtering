@@ -1341,10 +1341,10 @@ if __name__ == '__main__':
     # visualize_merl_sample_directions( merl_material_name='brass.binary',n_sample_per_level=200,constant=False,n_sample_per_frame=96,adjust_level=True,
     #     optimizer_type="adam",random_shuffle=True,allow_neg_weight=True,ref_jac_weight='light',ndf_clipping=False,)
 
-    synthetic_merl = True
+    synthetic_merl = False
     generate_merl_filtered_result(
-        merl_material_name='brass.binary',n_sample_per_level=200,constant=False,n_sample_per_frame=96,adjust_level=True,
-        optimizer_type="adam",random_shuffle=True,allow_neg_weight=True,ref_jac_weight='light',ndf_clipping=False, compute_numerical = False,
+        merl_material_name='black-obsidian.binary',n_sample_per_level=200,constant=False,n_sample_per_frame=96,adjust_level=True,
+        optimizer_type="adam",random_shuffle=True,allow_neg_weight=True,ref_jac_weight='light',ndf_clipping=False, compute_numerical = True,
         synthetic=synthetic_merl
     )
 

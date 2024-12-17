@@ -204,7 +204,7 @@ def loop_compute_is_view_dependent(normal_direction, ggx_alpha ,mipmaps, n_dir, 
 def loop_compute_merl_ndf_nojit(normal_direction,normalized_xyz_input,j_weighted_input,merl_ndf:material.powit_merl_ndf,delta_s):
     half_vector = map_util.get_half_vector_vectorized(normalized_xyz_input, normal_direction)
     NdotH = np.dot(half_vector, normal_direction)
-    NdotH = np.clip(NdotH,1e-6,1-1e-6)
+    NdotH = np.clip(NdotH,1e-4,1.0 - 1e-4)
     ndf = merl_ndf.get_ndf_numpy(NdotH)
 
     j_h = 1 / (4 * NdotH)
@@ -794,7 +794,8 @@ def compute_merl_ndf_reference_half_vector_torch_vectorized(res, merl_ndf: mater
     :return:
     """
     half_vec = torch_util.get_all_half_vector_torch_vectorized(normal_directions,directions)
-    NdotH = torch.einsum('bl,bijkl->bijk', normal_directions, half_vec).clamp(1e-4,1.0 - 1e-4)
+    #epsilon clipping can NOT be used here, since theta_h -> 0 is the highest contribution case.
+    NdotH = torch.einsum('bl,bijkl->bijk', normal_directions, half_vec).clamp(0.0,1.0)
     #NdotH is cos theta_h
 
     ndf = merl_ndf.get_ndf_torch(NdotH)
